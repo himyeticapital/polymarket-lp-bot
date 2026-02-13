@@ -128,10 +128,13 @@ class WebDashboard:
         s = self._state
         total = s.wins + s.losses
         win_rate = (s.wins / total * 100) if total > 0 else 0.0
-        pnl_pct = ((s.balance - s.initial_balance) / s.initial_balance * 100) if s.initial_balance else 0.0
+        portfolio = s.balance + s.positions_value
+        pnl_pct = ((portfolio - s.initial_balance) / s.initial_balance * 100) if s.initial_balance else 0.0
 
         return {
-            "balance": round(s.balance, 2),
+            "balance": round(portfolio, 2),
+            "cash": round(s.balance, 2),
+            "positions_value": round(s.positions_value, 2),
             "initial_balance": round(s.initial_balance, 2),
             "total_pnl": round(s.total_pnl, 2),
             "pnl_pct": round(pnl_pct, 1),

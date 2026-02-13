@@ -40,10 +40,20 @@ class GammaClient:
         return self._session
 
     @async_retry(max_attempts=3, base_delay=1.0)
-    async def get_markets(
-        self, active: bool = True, limit: int = 100, offset: int = 0
+    async def get_markets(self, active: bool = True, max_results: int = 500) -> list[Market]:
+        """Fetch active markets with pagination (up to max_results)."""
+        all_markets: list[Market] = []
+        for offset in range(0, max_results, 100):
+            batch = await self._fetch_market_page(active, limit=100, offset=offset)
+            all_markets.extend(batch)
+            if len(batch) < 100:
+                break
+        return all_markets
+
+    async def _fetch_market_page(
+        self, active: bool, limit: int = 100, offset: int = 0
     ) -> list[Market]:
-        """Fetch active, non-closed markets with incentive parameters."""
+        """Fetch a single page of active, non-closed markets with incentive parameters."""
         params = {
             "limit": limit,
             "offset": offset,
@@ -80,6 +90,12 @@ class GammaClient:
                 end_date=m.get("endDateIso"),
                 daily_reward_usd=daily_reward,
                 competition_level=comp_level,
+                competitive_raw=float(m.get("competitive", 0.5)),
+                volume_24h=float(m.get("volume24hr", 0)),
+                liquidity=float(m.get("liquidity", 0)),
+                spread=float(m.get("spread", 0)),
+                best_bid=float(m.get("bestBid", 0)),
+                best_ask=float(m.get("bestAsk", 0)),
             ))
         return markets
 

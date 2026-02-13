@@ -76,15 +76,16 @@ class RiskManager:
         if self.inventory.get_open_position_count() >= self.config.max_open_positions:
             return RiskVerdict(allowed=False, reason="max open positions reached")
 
-        # 5. Per-market exposure
-        market_exp = self.inventory.get_market_exposure(signal.condition_id)
-        if market_exp + trade_usd > self.config.max_per_market_usd:
-            remaining = self.config.max_per_market_usd - market_exp
-            if remaining <= 0:
-                return RiskVerdict(allowed=False, reason="per-market exposure limit reached")
-            signal = replace(signal, size=remaining / signal.price)
-            trade_usd = remaining
-            logger.info("risk.market_cap_adjusted", remaining=round(remaining, 2))
+        # 5. Per-market exposure (only limit BUY orders; SELL reduces exposure)
+        if signal.side.value == "BUY":
+            market_exp = self.inventory.get_market_exposure(signal.condition_id)
+            if market_exp + trade_usd > self.config.max_per_market_usd:
+                remaining = self.config.max_per_market_usd - market_exp
+                if remaining <= 0:
+                    return RiskVerdict(allowed=False, reason="per-market exposure limit reached")
+                signal = replace(signal, size=remaining / signal.price)
+                trade_usd = remaining
+                logger.info("risk.market_cap_adjusted", remaining=round(remaining, 2))
 
         # 6. Portfolio-wide exposure
         total_exp = self.inventory.get_total_exposure()

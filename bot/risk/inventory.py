@@ -32,27 +32,44 @@ class InventoryManager:
     # API sync
     # ------------------------------------------------------------------
 
-    async def refresh_from_api(self, clob_client: object) -> None:
-        """Pull latest balance and positions from the CLOB API."""
+    async def refresh_from_api(self, clob_client: object, data_api_client: object = None) -> None:
+        """Pull latest balance and positions from the APIs."""
+        # Fetch real USDC balance
         try:
             balance = await clob_client.get_balance()  # type: ignore[attr-defined]
             self.balance = float(balance)
         except Exception:
             logger.warning("inventory.balance_refresh_failed")
 
+        # Fetch positions from Data API
+        if data_api_client is None:
+            return
+
         try:
-            raw_positions = await clob_client.get_positions()  # type: ignore[attr-defined]
+            proxy_addr = self.config.proxy_address or self.config.wallet_address
+            raw_positions = await data_api_client.get_positions(proxy_addr)  # type: ignore[attr-defined]
             self.positions.clear()
             for p in raw_positions:
-                self.positions[p.token_id] = p
+                token_id = p.get("asset", "")
+                size = float(p.get("size", 0))
+                if size <= 0 or not token_id:
+                    continue
+                self.positions[token_id] = Position(
+                    condition_id=p.get("conditionId", ""),
+                    token_id=token_id,
+                    outcome=p.get("outcome", ""),
+                    size=size,
+                    avg_entry_price=float(p.get("avgPrice", 0)),
+                    strategy="unknown",
+                    current_price=float(p.get("curPrice", 0)),
+                )
+            logger.info(
+                "inventory.refreshed",
+                balance=round(self.balance, 2),
+                open_positions=len(self.positions),
+            )
         except Exception:
             logger.warning("inventory.positions_refresh_failed")
-
-        logger.debug(
-            "inventory.refreshed",
-            balance=round(self.balance, 2),
-            open_positions=len(self.positions),
-        )
 
     # ------------------------------------------------------------------
     # Local updates on fills
@@ -61,6 +78,10 @@ class InventoryManager:
     def update_on_fill(self, result: OrderResult) -> None:
         """Update balance and positions after a fill."""
         if not result.success:
+            return
+
+        # Skip resting GTC orders that haven't filled yet
+        if (result.fill_size or 0) == 0 and (result.fill_price or 0) == 0:
             return
 
         fill_price = result.fill_price or result.signal.price

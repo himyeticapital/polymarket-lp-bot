@@ -54,7 +54,8 @@ class BotConfig(BaseSettings):
 
     # === Wallet ===
     private_key: SecretStr = Field(description="Ethereum private key (with 0x prefix)")
-    wallet_address: str = Field(default="", description="Public wallet address")
+    wallet_address: str = Field(default="", description="Public wallet address (EOA)")
+    proxy_address: str = Field(default="", description="Polymarket proxy wallet address")
     chain_id: int = 137
 
     # === API URLs ===
@@ -79,10 +80,10 @@ class BotConfig(BaseSettings):
     # === Capital & Risk Limits ===
     starting_balance_usd: float = 500.0
     max_drawdown_usd: float = 250.0  # Hard stop — bot halts all trading
-    max_trade_size_usd: float = 25.0  # 5% of capital per trade
+    max_trade_size_usd: float = 10.0  # 5% of capital per trade
     daily_volume_cap_usd: float = 25000.0
     max_open_positions: int = 15
-    max_per_market_usd: float = 100.0  # 20% of capital per market
+    max_per_market_usd: float = 10.0  # Max $25 per market position
     max_portfolio_exposure_usd: float = 400.0  # 80% of capital
 
     # === Arbitrage ===
@@ -94,6 +95,12 @@ class BotConfig(BaseSettings):
     lp_order_size_usd: float = 25.0
     lp_refresh_interval_sec: float = 60.0
     lp_max_markets: int = 10
+    lp_min_volume_24h: float = 5000.0      # Min $5k 24h volume to enter
+    lp_min_liquidity: float = 1000.0        # Min $1k order book liquidity
+    lp_max_spread: float = 0.15             # Max 15% spread (skip wider markets)
+    lp_min_best_bid: float = 0.02           # Best bid must be >= $0.02
+    lp_min_daily_reward: float = 0.5   # Skip markets with < $0.50/day reward
+    lp_max_days_to_resolve: int = 180  # Skip markets > 6 months out
 
     # === Copy Trading ===
     copy_traders: str = ""  # Comma-separated addresses

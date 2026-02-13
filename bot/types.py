@@ -88,6 +88,12 @@ class Market:
     end_date: str | None = None
     daily_reward_usd: float = 0.0
     competition_level: str = ""  # "mild", "moderate", "fierce"
+    competitive_raw: float = 0.5   # Raw competitive score (0-1) from API
+    volume_24h: float = 0.0       # 24h trading volume in USD
+    liquidity: float = 0.0         # Total order book liquidity in USD
+    spread: float = 1.0            # Current bid-ask spread (0-1)
+    best_bid: float = 0.0          # Current best bid price
+    best_ask: float = 0.0          # Current best ask price
 
 
 @dataclass(frozen=True)

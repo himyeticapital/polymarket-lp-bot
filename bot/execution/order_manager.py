@@ -120,7 +120,7 @@ class OrderManager:
             logger.info("order.cancel_all_dry_run")
             return 0
         try:
-            result = await self.clob_client.cancel_all_orders()  # type: ignore[attr-defined]
+            result = await self.clob_client.cancel_all()  # type: ignore[attr-defined]
             count = result if isinstance(result, int) else 0
             logger.info("order.cancel_all", cancelled=count)
             return count
@@ -135,19 +135,24 @@ class OrderManager:
     async def _execute_live(self, signal: Signal) -> OrderResult:
         """Place a real order via the CLOB client."""
         try:
-            resp = await self.clob_client.place_order(  # type: ignore[attr-defined]
+            resp = await self.clob_client.create_and_post_limit_order(  # type: ignore[attr-defined]
                 token_id=signal.token_id,
-                side=signal.side.value,
                 price=signal.price,
                 size=signal.size,
+                side=signal.side.value,
                 order_type=signal.order_type.value,
             )
+            # GTC orders may be "live" (resting) not "filled"
+            status = resp.get("status", "").lower()
+            is_resting = status == "live"
+            fill_price = float(resp.get("fillPrice", 0)) or (0.0 if is_resting else signal.price)
+            fill_size = float(resp.get("fillSize", 0)) or (0.0 if is_resting else signal.size)
             return OrderResult(
                 signal=signal,
                 success=True,
                 order_id=resp.get("orderID") or resp.get("id"),
-                fill_price=float(resp.get("fillPrice", signal.price)),
-                fill_size=float(resp.get("fillSize", signal.size)),
+                fill_price=fill_price,
+                fill_size=fill_size,
                 fee_paid=float(resp.get("fee", 0.0)),
                 is_dry_run=False,
             )
@@ -188,7 +193,9 @@ class OrderManager:
                 "is_dry_run": result.is_dry_run,
                 "error": result.error,
                 "market": result.signal.market_question or "???",
-                "pnl": result.signal.edge * fill_size * fill_price if result.success else 0,
+                "pnl": 0.0,  # Real P&L tracked on resolution, not at order time
+                "balance": self.inventory.balance,
+                "positions_value": self.inventory.get_total_exposure(),
             },
         )
         try:

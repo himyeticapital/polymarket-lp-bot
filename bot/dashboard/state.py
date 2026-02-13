@@ -46,7 +46,8 @@ class DashboardState:
     """Central state that all dashboard widgets read from."""
 
     # Stats bar
-    balance: float = 500.0
+    balance: float = 500.0       # USDC cash only
+    positions_value: float = 0.0  # Current value of all positions
     initial_balance: float = 500.0
     total_pnl: float = 0.0
     wins: int = 0
@@ -97,15 +98,20 @@ def apply_event(state: DashboardState, event: BotEvent) -> None:
     ts = event.timestamp.strftime("%H:%M:%S")
 
     if event.type == EventType.TRADE_EXECUTED:
-        pnl = d.get("pnl", 0)
         size = d.get("size", 0) * d.get("price", 0)
         state.total_trades += 1
         state.daily_volume += size
-        state.total_pnl += pnl
-        state.balance += pnl
-        state.balance_history.append(state.balance)
 
-        if pnl >= 0:
+        # Use real inventory balance if provided
+        if "balance" in d:
+            state.balance = d["balance"]
+        if "positions_value" in d:
+            state.positions_value = d["positions_value"]
+            portfolio = state.balance + state.positions_value
+            state.total_pnl = portfolio - state.initial_balance
+        state.balance_history.append(state.balance + state.positions_value)
+
+        if d.get("success", False):
             state.wins += 1
         else:
             state.losses += 1
@@ -119,7 +125,7 @@ def apply_event(state: DashboardState, event: BotEvent) -> None:
         if skey and skey in state.strategy_stats:
             ss = state.strategy_stats[skey]
             ss.trades += 1
-            ss.pnl += pnl
+            ss.pnl = state.total_pnl  # Use overall P&L from inventory balance
             ss.volume += size
             ss.status = "active"
 

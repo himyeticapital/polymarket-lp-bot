@@ -74,8 +74,7 @@ class Engine:
         await self._gamma.connect()
         if self._config.enable_synth_edge:
             await self._synth.connect()
-        if self._config.enable_copy_trading:
-            await self._data_api.connect()
+        await self._data_api.connect()  # Always connect — needed for inventory sync
 
         # Notifications
         if self._config.telegram_enabled:
@@ -91,6 +90,19 @@ class Engine:
             self._config, self._clob, self._risk, self._inventory,
             self._db, self._event_bus,
         )
+
+        # Sync inventory with real API data (balance + existing positions)
+        await self._inventory.refresh_from_api(self._clob, self._data_api)
+        logger.info(
+            "Inventory synced from API",
+            balance=round(self._inventory.balance, 2),
+            positions=len(self._inventory.positions),
+        )
+        # Update dashboard state with real balance
+        self._state.balance = self._inventory.balance
+        self._state.positions_value = self._inventory.get_total_exposure()
+        # Initial balance should reflect total portfolio (cash + positions)
+        self._state.initial_balance = self._inventory.balance + self._inventory.get_total_exposure()
 
         # Shutdown handler
         self._shutdown.register()

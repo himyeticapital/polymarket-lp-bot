@@ -26,12 +26,15 @@ class AsyncClobClient:
         """Initialize the synchronous CLOB client and derive API credentials."""
         from py_clob_client.client import ClobClient
 
+        sig_type = 2 if self._config.proxy_address else 0
+        funder = self._config.proxy_address or None
         self._client = await asyncio.to_thread(
             ClobClient,
             self._config.clob_host,
             key=self._config.private_key.get_secret_value(),
             chain_id=self._config.chain_id,
-            signature_type=0,
+            signature_type=sig_type,
+            funder=funder,
         )
         creds = await asyncio.to_thread(self._client.create_or_derive_api_creds)
         self._client.set_api_creds(creds)
@@ -51,14 +54,16 @@ class AsyncClobClient:
     async def get_order_book(self, token_id: str) -> OrderBook:
         """Fetch order book for a token."""
         raw = await asyncio.to_thread(self.client.get_order_book, token_id)
-        bids = [
-            OrderBookLevel(price=float(b.price), size=float(b.size))
-            for b in (raw.bids or [])
-        ]
-        asks = [
-            OrderBookLevel(price=float(a.price), size=float(a.size))
-            for a in (raw.asks or [])
-        ]
+        bids = sorted(
+            [OrderBookLevel(price=float(b.price), size=float(b.size))
+             for b in (raw.bids or [])],
+            key=lambda x: x.price, reverse=True,  # best (highest) bid first
+        )
+        asks = sorted(
+            [OrderBookLevel(price=float(a.price), size=float(a.size))
+             for a in (raw.asks or [])],
+            key=lambda x: x.price,  # best (lowest) ask first
+        )
         return OrderBook(token_id=token_id, bids=bids, asks=asks)
 
     @async_retry(max_attempts=3, base_delay=1.0)
@@ -148,3 +153,17 @@ class AsyncClobClient:
         """Get user's trade history."""
         raw = await asyncio.to_thread(self.client.get_trades)
         return raw if isinstance(raw, list) else []
+
+    @async_retry(max_attempts=3, base_delay=1.0)
+    async def get_balance(self) -> float:
+        """Get USDC balance from CLOB API."""
+        from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+
+        sig_type = 2 if self._config.proxy_address else 0
+        params = BalanceAllowanceParams(
+            asset_type=AssetType.COLLATERAL, signature_type=sig_type
+        )
+        result = await asyncio.to_thread(self.client.get_balance_allowance, params)
+        # Balance is in USDC units (6 decimals)
+        raw_balance = int(result.get("balance", 0))
+        return raw_balance / 1_000_000
