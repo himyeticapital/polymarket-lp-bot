@@ -1,0 +1,46 @@
+[project]
+name = "polymarket-bot"
+version = "0.1.0"
+description = "Polymarket airdrop farming bot — arbitrage, LP rewards, copy trading, Synth edge"
+requires-python = ">=3.11"
+dependencies = [
+    "py-clob-client>=0.34,<1.0",
+    "aiohttp>=3.9,<4.0",
+    "aiosqlite>=0.20,<1.0",
+    "websockets>=12.0,<14.0",
+    "pydantic>=2.5,<3.0",
+    "pydantic-settings>=2.1,<3.0",
+    "python-dotenv>=1.0,<2.0",
+    "python-telegram-bot>=21.0,<22.0",
+    "structlog>=24.0,<26.0",
+    "textual>=1.0,<2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-mock>=3.12",
+    "aioresponses>=0.7",
+    "ruff>=0.5",
+    "mypy>=1.8",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true

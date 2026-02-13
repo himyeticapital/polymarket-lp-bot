@@ -1,9 +1,15 @@
 # Secrets
 .env
 .env.*
+!.env.example
 *.pem
 *.key
+*.gpg
 credentials.json
+
+# Database (contains trade history + wallet data)
+bot_data.db
+*.db-journal
 
 # Python
 venv/
