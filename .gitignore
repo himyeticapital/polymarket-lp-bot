@@ -1,0 +1,32 @@
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+
+# TypeScript / Node
+node_modules/
+build/
+*.tsbuildinfo
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+*.log
+.vscode/settings.json
+
+# Coverage
+htmlcov/
+.coverage
+coverage/
