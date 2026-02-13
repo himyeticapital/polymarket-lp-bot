@@ -71,7 +71,7 @@ class CopyTradingStrategy(BaseStrategy):
     async def scan(self) -> list[Signal]:
         signals: list[Signal] = []
 
-        for address in self.config.copy_traders:
+        for address in self.config.copy_traders_list:
             try:
                 addr_signals = await self._check_trader(address)
                 signals.extend(addr_signals)
@@ -160,16 +160,19 @@ class CopyTradingStrategy(BaseStrategy):
 
         snapshots: list[_PositionSnapshot] = []
         for p in raw:
-            snapshots.append(
-                _PositionSnapshot(
-                    token_id=p.token_id,
-                    condition_id=p.condition_id,
-                    outcome=p.outcome,
-                    size=p.size,
-                    price=p.current_price,
-                    market_question=getattr(p, "market_question", ""),
+            try:
+                snapshots.append(
+                    _PositionSnapshot(
+                        token_id=p.get("asset", p.get("token_id", "")),
+                        condition_id=p.get("conditionId", p.get("condition_id", "")),
+                        outcome=p.get("outcome", "Yes"),
+                        size=float(p.get("size", 0)),
+                        price=float(p.get("currentPrice", p.get("price", 0))),
+                        market_question=p.get("title", p.get("market_question", "")),
+                    )
                 )
-            )
+            except (ValueError, TypeError):
+                continue
         return snapshots
 
     # ------------------------------------------------------------------

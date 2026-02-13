@@ -34,12 +34,14 @@ class LiquidityStrategy(BaseStrategy):
         self,
         config: BotConfig,
         clob_client: object,
+        gamma_client: object,
         order_manager: OrderManager,
         risk_manager: RiskManager,
         db: Database,
         event_bus: EventBus,
     ) -> None:
         super().__init__(config, clob_client, order_manager, risk_manager, db, event_bus)
+        self.gamma_client = gamma_client
         self.scan_interval_sec = jitter_delay(
             config.lp_refresh_interval_sec, config.timing_jitter_pct
         )
@@ -55,7 +57,7 @@ class LiquidityStrategy(BaseStrategy):
         await self._cancel_stale_orders()
 
         try:
-            markets = await self.clob_client.get_markets()  # type: ignore[attr-defined]
+            markets = await self.gamma_client.get_markets()  # type: ignore[attr-defined]
         except Exception:
             logger.exception("lp.fetch_markets_failed")
             return []
@@ -67,12 +69,28 @@ class LiquidityStrategy(BaseStrategy):
             new_signals = await self._quote_market(market)
             signals.extend(new_signals)
 
+        # Build market summary for dashboard
+        dashboard_markets = []
+        for m in ranked[: self.config.lp_max_markets]:
+            yes_t = next((t for t in m.tokens if t.outcome == "Yes"), None)
+            if yes_t:
+                dashboard_markets.append({
+                    "name": m.question[:40],
+                    "price": yes_t.price,
+                    "edge": 0.0,
+                    "fair": yes_t.price,
+                })
+
         self._publish_event(
             EventType.MARKET_SCANNED,
             {
                 "strategy": Strategy.LIQUIDITY,
+                "count": len(markets),
+                "total_scanned": len(markets),
+                "avg_edge": 0.0,
+                "markets": dashboard_markets[:8],
                 "markets_quoted": min(len(ranked), self.config.lp_max_markets),
-                "orders_placed": len(signals),
+                "signals": len(signals),
             },
         )
 
@@ -86,11 +104,14 @@ class LiquidityStrategy(BaseStrategy):
         """Rank markets by reward potential (reward / competition)."""
         eligible = [
             m for m in markets
-            if m.active and m.max_incentive_spread > 0 and m.daily_reward_usd > 0
+            if m.active and m.max_incentive_spread > 0
         ]
         competition_weights = {"mild": 1.0, "moderate": 0.5, "fierce": 0.25}
         eligible.sort(
-            key=lambda m: m.daily_reward_usd * competition_weights.get(m.competition_level, 0.5),
+            key=lambda m: (
+                m.daily_reward_usd * competition_weights.get(m.competition_level, 0.5)
+                + m.max_incentive_spread  # rank by spread when reward data absent
+            ),
             reverse=True,
         )
         return eligible

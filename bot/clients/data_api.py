@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import ssl
+
 import aiohttp
+import certifi
 import structlog
 
 from bot.config import BotConfig
@@ -19,7 +22,8 @@ class DataApiClient:
         self._session: aiohttp.ClientSession | None = None
 
     async def connect(self) -> None:
-        self._session = aiohttp.ClientSession()
+        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+        self._session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_ctx))
         logger.info("Data API client connected", url=self._base_url)
 
     async def close(self) -> None:

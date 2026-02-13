@@ -73,12 +73,14 @@ class BotConfig(BaseSettings):
     enable_copy_trading: bool = True
     enable_synth_edge: bool = True
     enable_dashboard: bool = True
+    enable_web_dashboard: bool = True
+    web_dashboard_port: int = 8080
 
     # === Capital & Risk Limits ===
     starting_balance_usd: float = 500.0
     max_drawdown_usd: float = 250.0  # Hard stop — bot halts all trading
     max_trade_size_usd: float = 25.0  # 5% of capital per trade
-    daily_volume_cap_usd: float = 2000.0
+    daily_volume_cap_usd: float = 25000.0
     max_open_positions: int = 15
     max_per_market_usd: float = 100.0  # 20% of capital per market
     max_portfolio_exposure_usd: float = 400.0  # 80% of capital
@@ -94,7 +96,7 @@ class BotConfig(BaseSettings):
     lp_max_markets: int = 10
 
     # === Copy Trading ===
-    copy_traders: list[str] = Field(default_factory=list)
+    copy_traders: str = ""  # Comma-separated addresses
     copy_scale_factor: float = 0.1  # 10% of copied trader's size
     copy_poll_interval_sec: float = 30.0
     copy_min_trade_usd: float = 10.0
@@ -102,7 +104,7 @@ class BotConfig(BaseSettings):
 
     # === Synth Edge ===
     synth_edge_threshold: float = 0.05  # 5% edge required
-    synth_assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH"])
+    synth_assets: str = "BTC,ETH"  # Comma-separated asset symbols
     synth_poll_interval_sec: float = 300.0  # 5 minutes
     synth_kelly_fraction: float = 0.25  # Quarter-Kelly for safety
 
@@ -124,7 +126,18 @@ class BotConfig(BaseSettings):
         "env_file": ".env",
         "env_prefix": "PM_",
         "env_file_encoding": "utf-8",
+        "populate_by_name": True,
     }
+
+    @property
+    def copy_traders_list(self) -> list[str]:
+        """Parsed list of trader addresses to copy."""
+        return [x.strip() for x in self.copy_traders.split(",") if x.strip()]
+
+    @property
+    def synth_assets_list(self) -> list[str]:
+        """Parsed list of Synth assets to track."""
+        return [x.strip() for x in self.synth_assets.split(",") if x.strip()]
 
     @model_validator(mode="after")
     def _warn_env_permissions(self) -> "BotConfig":

@@ -52,12 +52,12 @@ class AsyncClobClient:
         """Fetch order book for a token."""
         raw = await asyncio.to_thread(self.client.get_order_book, token_id)
         bids = [
-            OrderBookLevel(price=float(b.get("price", 0)), size=float(b.get("size", 0)))
-            for b in (raw.get("bids") or [])
+            OrderBookLevel(price=float(b.price), size=float(b.size))
+            for b in (raw.bids or [])
         ]
         asks = [
-            OrderBookLevel(price=float(a.get("price", 0)), size=float(a.get("size", 0)))
-            for a in (raw.get("asks") or [])
+            OrderBookLevel(price=float(a.price), size=float(a.size))
+            for a in (raw.asks or [])
         ]
         return OrderBook(token_id=token_id, bids=bids, asks=asks)
 

@@ -33,12 +33,14 @@ class ArbitrageStrategy(BaseStrategy):
         self,
         config: BotConfig,
         clob_client: object,
+        gamma_client: object,
         order_manager: OrderManager,
         risk_manager: RiskManager,
         db: Database,
         event_bus: EventBus,
     ) -> None:
         super().__init__(config, clob_client, order_manager, risk_manager, db, event_bus)
+        self.gamma_client = gamma_client
         self.scan_interval_sec = jitter_delay(
             config.arb_scan_interval_sec, config.timing_jitter_pct
         )
@@ -54,14 +56,34 @@ class ArbitrageStrategy(BaseStrategy):
         max_trade = self.config.max_trade_size_usd
 
         try:
-            markets = await self.clob_client.get_markets()  # type: ignore[attr-defined]
+            markets = await self.gamma_client.get_markets()  # type: ignore[attr-defined]
         except Exception:
             logger.exception("arb.fetch_markets_failed")
             return signals
 
+        # Build market summary for dashboard display
+        dashboard_markets = []
+        for m in markets:
+            if not m.active or len(m.tokens) != 2:
+                continue
+            yes_t = next((t for t in m.tokens if t.outcome == "Yes"), None)
+            if yes_t:
+                dashboard_markets.append({
+                    "name": m.question[:40],
+                    "price": yes_t.price,
+                    "edge": 0.0,
+                    "fair": yes_t.price,
+                })
+
         self._publish_event(
             EventType.MARKET_SCANNED,
-            {"strategy": Strategy.ARBITRAGE, "markets_checked": len(markets)},
+            {
+                "strategy": Strategy.ARBITRAGE,
+                "count": len(markets),
+                "total_scanned": len(markets),
+                "avg_edge": 0.0,
+                "markets": dashboard_markets[:8],
+            },
         )
 
         for market in markets:

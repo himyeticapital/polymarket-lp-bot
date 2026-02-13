@@ -11,7 +11,6 @@ from textual.css.query import NoMatches
 from bot.dashboard.state import DashboardState, process_events
 from bot.dashboard.widgets.activity_log import ActivityLog
 from bot.dashboard.widgets.balance_chart import BalanceChart
-from bot.dashboard.widgets.bayesian import BayesianPanel
 from bot.dashboard.widgets.footer_stats import FooterStats
 from bot.dashboard.widgets.markets_panel import MarketsPanel
 from bot.dashboard.widgets.stats_bar import StatsBar
@@ -59,11 +58,6 @@ MarketsPanel {
     background: #111;
 }
 
-BayesianPanel {
-    border: solid #1a1a1a;
-    background: #111;
-}
-
 ActivityLog {
     border: solid #1a1a1a;
     background: #111;
@@ -103,7 +97,6 @@ class DashboardApp(App):
         yield BalanceChart(id="chart-row")
         with Horizontal(id="middle-row"):
             yield MarketsPanel()
-            yield BayesianPanel()
             yield ActivityLog()
         yield FooterStats(id="bottom-bar")
 
@@ -122,7 +115,6 @@ class DashboardApp(App):
             self.query_one(StatsBar).update_stats(self.state)
             self.query_one(BalanceChart).update_chart(self.state)
             self.query_one(MarketsPanel).update_markets(self.state)
-            self.query_one(BayesianPanel).update_bayes(self.state)
             self.query_one(ActivityLog).update_log(self.state)
             self.query_one(FooterStats).update_footer(self.state)
         except NoMatches:
@@ -178,7 +170,6 @@ if __name__ == "__main__":
                 await bus.put(BotEvent(type=event_type, data={
                     "market": m["name"], "price": m["price"],
                     "fair": m["fair"], "edge": m["edge"],
-                    "prior": 0.346, "likelihood": 0.890, "evidence": 0.449,
                 }))
             else:
                 await bus.put(BotEvent(type=event_type, data={

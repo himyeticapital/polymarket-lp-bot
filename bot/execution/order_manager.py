@@ -173,18 +173,22 @@ class OrderManager:
             logger.exception("order.log_failed")
 
     def _publish_trade_event(self, result: OrderResult) -> None:
+        fill_price = result.fill_price or result.signal.price
+        fill_size = result.fill_size or result.signal.size
         event = BotEvent(
             type=EventType.TRADE_EXECUTED,
             data={
                 "strategy": result.signal.strategy,
                 "token_id": result.signal.token_id,
                 "side": result.signal.side,
-                "price": result.fill_price or result.signal.price,
-                "size": result.fill_size or result.signal.size,
+                "price": fill_price,
+                "size": fill_size,
                 "success": result.success,
                 "order_id": result.order_id,
                 "is_dry_run": result.is_dry_run,
                 "error": result.error,
+                "market": result.signal.market_question or "???",
+                "pnl": result.signal.edge * fill_size * fill_price if result.success else 0,
             },
         )
         try:

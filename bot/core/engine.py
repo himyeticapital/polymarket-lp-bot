@@ -15,6 +15,7 @@ from bot.config import BotConfig
 from bot.core.scheduler import Scheduler
 from bot.core.shutdown import ShutdownHandler
 from bot.dashboard.state import DashboardState
+from bot.dashboard.web import WebDashboard
 from bot.data.database import Database
 from bot.execution.order_manager import OrderManager
 from bot.notifications.telegram import TelegramNotifier
@@ -69,8 +70,7 @@ class Engine:
         self._data_api = DataApiClient(self._config)
         self._ws_market = MarketWebSocket(self._config)
 
-        if not self._config.dry_run:
-            await self._clob.connect()
+        await self._clob.connect()
         await self._gamma.connect()
         if self._config.enable_synth_edge:
             await self._synth.connect()
@@ -89,7 +89,7 @@ class Engine:
         )
         self._order_mgr = OrderManager(
             self._config, self._clob, self._risk, self._inventory,
-            self._db, self._event_bus, self._notifier,
+            self._db, self._event_bus,
         )
 
         # Shutdown handler
@@ -112,28 +112,28 @@ class Engine:
         # Strategy tasks
         if self._config.enable_arbitrage:
             strat = ArbitrageStrategy(
-                self._config, self._clob, self._gamma, self._order_mgr,
-                self._risk, self._db, self._event_bus,
+                self._config, self._clob, self._gamma,
+                self._order_mgr, self._risk, self._db, self._event_bus,
             )
             self._tasks.append(asyncio.create_task(strat.run(), name="arb"))
 
         if self._config.enable_liquidity:
             strat = LiquidityStrategy(
-                self._config, self._clob, self._gamma, self._order_mgr,
-                self._risk, self._db, self._event_bus,
+                self._config, self._clob, self._gamma,
+                self._order_mgr, self._risk, self._db, self._event_bus,
             )
             self._tasks.append(asyncio.create_task(strat.run(), name="lp"))
 
         if self._config.enable_copy_trading:
             strat = CopyTradingStrategy(
-                self._config, self._clob, self._data_api, self._order_mgr,
+                self._config, self._data_api, self._order_mgr,
                 self._risk, self._db, self._event_bus,
             )
             self._tasks.append(asyncio.create_task(strat.run(), name="copy"))
 
         if self._config.enable_synth_edge:
             strat = SynthEdgeStrategy(
-                self._config, self._clob, self._synth, self._order_mgr,
+                self._config, self._synth, self._order_mgr,
                 self._risk, self._db, self._event_bus,
             )
             self._tasks.append(asyncio.create_task(strat.run(), name="synth"))
@@ -149,6 +149,15 @@ class Engine:
 
             app = DashboardApp(event_bus=self._event_bus, state=self._state)
             self._tasks.append(asyncio.create_task(app.run_async(), name="dashboard"))
+
+        # Web dashboard (browser-based)
+        if self._config.enable_web_dashboard:
+            web_dash = WebDashboard(
+                state=self._state,
+                event_bus=self._event_bus,
+                port=self._config.web_dashboard_port,
+            )
+            self._tasks.append(asyncio.create_task(web_dash.run_forever(), name="web-dashboard"))
 
         # Wait for shutdown signal or task failure
         shutdown_task = asyncio.create_task(self._shutdown.wait(), name="shutdown-wait")

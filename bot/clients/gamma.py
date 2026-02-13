@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import ssl
+
 import aiohttp
+import certifi
 import structlog
 
 from bot.config import BotConfig
@@ -20,7 +24,8 @@ class GammaClient:
         self._session: aiohttp.ClientSession | None = None
 
     async def connect(self) -> None:
-        self._session = aiohttp.ClientSession()
+        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+        self._session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_ctx))
         logger.info("Gamma client connected", url=self._base_url)
 
     async def close(self) -> None:
@@ -38,32 +43,71 @@ class GammaClient:
     async def get_markets(
         self, active: bool = True, limit: int = 100, offset: int = 0
     ) -> list[Market]:
-        """Fetch active markets with incentive parameters."""
-        params = {"limit": limit, "offset": offset, "active": str(active).lower()}
+        """Fetch active, non-closed markets with incentive parameters."""
+        params = {
+            "limit": limit,
+            "offset": offset,
+            "active": str(active).lower(),
+            "closed": "false",
+        }
         async with self.session.get(f"{self._base_url}/markets", params=params) as resp:
             resp.raise_for_status()
             data = await resp.json()
 
         markets = []
         for m in data if isinstance(data, list) else []:
-            tokens = []
-            for t in m.get("tokens", []):
-                tokens.append(TokenInfo(
-                    token_id=t.get("token_id", ""),
-                    outcome=t.get("outcome", ""),
-                    price=float(t.get("price", 0)),
-                ))
+            tokens = self._parse_tokens(m)
+            # Extract daily reward from clobRewards if available
+            daily_reward = 0.0
+            for cr in m.get("clobRewards", []) or []:
+                daily_reward += float(cr.get("rewardsDailyRate", 0))
+            # competitive is 0-1 float; map to category
+            comp = float(m.get("competitive", 0.5))
+            if comp < 0.4:
+                comp_level = "mild"
+            elif comp < 0.75:
+                comp_level = "moderate"
+            else:
+                comp_level = "fierce"
             markets.append(Market(
-                condition_id=m.get("condition_id", ""),
+                condition_id=m.get("conditionId", ""),
                 question=m.get("question", ""),
                 tokens=tokens,
                 active=m.get("active", True),
-                min_incentive_size=float(m.get("min_incentive_size", 0)),
-                max_incentive_spread=float(m.get("max_incentive_spread", 0)),
+                min_incentive_size=float(m.get("rewardsMinSize", 0)),
+                max_incentive_spread=float(m.get("rewardsMaxSpread", 0)) / 100.0,
                 category=m.get("category", ""),
-                end_date=m.get("end_date_iso"),
+                end_date=m.get("endDateIso"),
+                daily_reward_usd=daily_reward,
+                competition_level=comp_level,
             ))
         return markets
+
+    @staticmethod
+    def _parse_tokens(m: dict) -> list[TokenInfo]:
+        """Parse clobTokenIds + outcomes + outcomePrices into TokenInfo list."""
+        try:
+            raw_ids = m.get("clobTokenIds", "[]")
+            token_ids = json.loads(raw_ids) if isinstance(raw_ids, str) else raw_ids
+        except (json.JSONDecodeError, TypeError):
+            return []
+        try:
+            raw_outcomes = m.get("outcomes", "[]")
+            outcomes = json.loads(raw_outcomes) if isinstance(raw_outcomes, str) else raw_outcomes
+        except (json.JSONDecodeError, TypeError):
+            outcomes = []
+        try:
+            raw_prices = m.get("outcomePrices", "[]")
+            prices = json.loads(raw_prices) if isinstance(raw_prices, str) else raw_prices
+        except (json.JSONDecodeError, TypeError):
+            prices = []
+
+        tokens = []
+        for i, tid in enumerate(token_ids):
+            outcome = outcomes[i] if i < len(outcomes) else ""
+            price = float(prices[i]) if i < len(prices) else 0.0
+            tokens.append(TokenInfo(token_id=str(tid), outcome=outcome, price=price))
+        return tokens
 
     @async_retry(max_attempts=3, base_delay=1.0)
     async def get_events(self, active: bool = True) -> list[dict]:
@@ -92,21 +136,14 @@ class GammaClient:
             resp.raise_for_status()
             m = await resp.json()
 
-        tokens = [
-            TokenInfo(
-                token_id=t.get("token_id", ""),
-                outcome=t.get("outcome", ""),
-                price=float(t.get("price", 0)),
-            )
-            for t in m.get("tokens", [])
-        ]
+        tokens = self._parse_tokens(m)
         return Market(
-            condition_id=m.get("condition_id", ""),
+            condition_id=m.get("conditionId", ""),
             question=m.get("question", ""),
             tokens=tokens,
             active=m.get("active", True),
-            min_incentive_size=float(m.get("min_incentive_size", 0)),
-            max_incentive_spread=float(m.get("max_incentive_spread", 0)),
+            min_incentive_size=float(m.get("rewardsMinSize", 0)),
+            max_incentive_spread=float(m.get("rewardsMaxSpread", 0)) / 100.0,
             category=m.get("category", ""),
-            end_date=m.get("end_date_iso"),
+            end_date=m.get("endDateIso"),
         )

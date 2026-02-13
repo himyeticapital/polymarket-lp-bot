@@ -55,7 +55,7 @@ class SynthEdgeStrategy(BaseStrategy):
     async def scan(self) -> list[Signal]:
         signals: list[Signal] = []
 
-        for asset in self.config.synth_assets:
+        for asset in self.config.synth_assets_list:
             try:
                 forecast = await self._fetch_forecast(asset)
             except Exception:
@@ -143,8 +143,7 @@ class SynthEdgeStrategy(BaseStrategy):
     async def _fetch_forecast(self, asset: str) -> SynthForecast | None:
         """Retrieve Synth API forecast and Polymarket price for *asset*."""
         try:
-            data = await self.clob_client.get_synth_forecast(asset)  # type: ignore[attr-defined]
-            return data if isinstance(data, SynthForecast) else None
+            return await self.clob_client.get_hourly_up_down(asset)  # type: ignore[attr-defined]
         except Exception:
             return None
 

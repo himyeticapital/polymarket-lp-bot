@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import ssl
+
 import aiohttp
+import certifi
 import structlog
 
 from bot.config import BotConfig
@@ -22,7 +25,10 @@ class SynthClient:
 
     async def connect(self) -> None:
         headers = {"Authorization": f"Bearer {self._api_key}"}
-        self._session = aiohttp.ClientSession(headers=headers)
+        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+        self._session = aiohttp.ClientSession(
+            headers=headers, connector=aiohttp.TCPConnector(ssl=ssl_ctx)
+        )
         logger.info("Synth client connected", url=self._base_url)
 
     async def close(self) -> None:
