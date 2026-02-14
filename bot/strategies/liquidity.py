@@ -560,7 +560,14 @@ class LiquidityStrategy(BaseStrategy):
         if result is not None:
             return result
 
-        # Current side failed — try the other side as fallback
+        # If we already have an order tracked for this market (on the current side),
+        # the None means "order was kept — price stable". Do NOT try the fallback
+        # side, or we'd stack a second order on the opposite side every cycle.
+        if market.condition_id in self._live_orders:
+            return None
+
+        # Current side genuinely failed (mid out of range, too expensive, etc.)
+        # — try the other side as fallback
         alt_side = "no" if side == "yes" else "yes"
         result = await self._try_quote_side(market, alt_side, yes_token, no_token)
         if result is not None:

@@ -131,6 +131,15 @@ class InventoryManager:
     # Exposure queries
     # ------------------------------------------------------------------
 
+    @property
+    def portfolio_value(self) -> float:
+        """Cash + current market value of all positions."""
+        position_value = sum(
+            p.size * (p.current_price if p.current_price > 0 else p.avg_entry_price)
+            for p in self.positions.values()
+        )
+        return self.balance + position_value
+
     def get_total_exposure(self) -> float:
         """Sum of (size * avg_entry_price) across all positions."""
         return sum(p.size * p.avg_entry_price for p in self.positions.values())

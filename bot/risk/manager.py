@@ -103,25 +103,30 @@ class RiskManager:
     # ------------------------------------------------------------------
 
     def _check_drawdown(self) -> bool:
-        """Return True if balance has breached the drawdown threshold."""
+        """Return True if portfolio value has breached the drawdown threshold.
+
+        Uses total portfolio value (cash + positions) instead of cash-only,
+        since LP positions tie up cash in tokens that retain value.
+        """
         if self._halted:
             return True
 
-        balance = self.inventory.balance
+        portfolio = self.inventory.portfolio_value
         threshold = self.config.drawdown_threshold
 
-        if balance <= threshold:
+        if portfolio <= threshold:
             self._halted = True
             logger.critical(
                 "risk.DRAWDOWN_HALT",
-                balance=round(balance, 2),
+                portfolio=round(portfolio, 2),
+                cash=round(self.inventory.balance, 2),
                 threshold=round(threshold, 2),
             )
             try:
                 self.event_bus.put_nowait(
                     BotEvent(
                         type=EventType.DRAWDOWN_HALT,
-                        data={"balance": balance, "threshold": threshold},
+                        data={"balance": portfolio, "threshold": threshold},
                     )
                 )
             except Exception:
@@ -129,18 +134,19 @@ class RiskManager:
             return True
 
         # Warning at 80% of max drawdown consumed
-        drawdown_used = self.config.starting_balance_usd - balance
+        drawdown_used = self.config.starting_balance_usd - portfolio
         if drawdown_used >= self.config.max_drawdown_usd * 0.80:
             logger.warning(
                 "risk.drawdown_warning",
-                balance=round(balance, 2),
+                portfolio=round(portfolio, 2),
+                cash=round(self.inventory.balance, 2),
                 drawdown_used=round(drawdown_used, 2),
             )
             try:
                 self.event_bus.put_nowait(
                     BotEvent(
                         type=EventType.DRAWDOWN_WARNING,
-                        data={"balance": balance, "drawdown_used": drawdown_used},
+                        data={"balance": portfolio, "drawdown_used": drawdown_used},
                     )
                 )
             except Exception:
