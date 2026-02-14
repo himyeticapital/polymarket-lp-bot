@@ -145,6 +145,7 @@ class WebDashboard:
             "api_costs": round(s.api_costs, 2),
             "total_volume": round(s.total_volume, 2),
             "lp_rewards": round(s.lp_rewards, 4),
+            "lp_markets": s.lp_markets,
             "markets_traded": s.markets_traded,
             "balance_history": s.balance_history[-60:],
             "markets": s.markets[:8],

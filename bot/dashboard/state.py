@@ -59,6 +59,8 @@ class DashboardState:
     # Polymarket profile stats (from API)
     total_volume: float = 0.0       # All-time volume from leaderboard
     lp_rewards: float = 0.0         # Total LP rewards earned
+    # LP market details (set by LiquidityStrategy each scan)
+    lp_markets: list[dict] = field(default_factory=list)
     markets_traded: int = 0         # Unique markets traded
 
     # Balance history (sparkline data points)

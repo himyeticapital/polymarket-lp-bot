@@ -133,6 +133,7 @@ class Engine:
             strat = LiquidityStrategy(
                 self._config, self._clob, self._gamma,
                 self._order_mgr, self._risk, self._db, self._event_bus,
+                dashboard_state=self._state,
             )
             self._tasks.append(asyncio.create_task(strat.run(), name="lp"))
 

@@ -835,6 +835,107 @@ body {
 }
 
 /* ===================================================================
+   LP MARKETS TABLE
+   =================================================================== */
+.lp-markets-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.lp-markets-table thead th {
+  font-family: var(--font-sans);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.lp-markets-table thead th:last-child,
+.lp-markets-table tbody td:last-child {
+  text-align: center;
+}
+
+.lp-markets-table tbody td {
+  padding: 9px 10px;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.lp-markets-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.lp-markets-table tbody tr:hover {
+  background: var(--card-glass);
+}
+
+.lp-markets-table .market-name-cell {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.lp-markets-table .num {
+  text-align: right;
+  font-weight: 500;
+}
+
+.lp-status-badge {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  text-transform: uppercase;
+  display: inline-block;
+}
+
+.lp-status-badge.eligible {
+  color: var(--green);
+  background: var(--green-dim);
+}
+
+.lp-status-badge.ineligible {
+  color: var(--red);
+  background: var(--red-dim);
+}
+
+.lp-status-badge.filled {
+  color: var(--yellow);
+  background: var(--yellow-dim);
+}
+
+.lp-summary-bar {
+  display: flex;
+  gap: 20px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.lp-summary-bar .lp-sum-value {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.lp-summary-bar .lp-sum-value.positive {
+  color: var(--green);
+}
+
+/* ===================================================================
    RESPONSIVE
    =================================================================== */
 @media (max-width: 1100px) {
@@ -1127,6 +1228,40 @@ body {
   </div>
 
   <!-- ================================================================
+       LP MARKETS
+       ================================================================ -->
+  <div class="card" id="lpMarketsPanel">
+    <div class="card-header">
+      LP Markets
+      <span class="count" id="lpMarketsCount">0 markets</span>
+    </div>
+    <div style="padding: 0 18px 0; overflow-x: auto;">
+      <table class="lp-markets-table">
+        <thead>
+          <tr>
+            <th>Market</th>
+            <th>Side</th>
+            <th>Price</th>
+            <th>Shares</th>
+            <th>Min</th>
+            <th>Pool</th>
+            <th>Spread</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="lpMarketsBody">
+          <tr><td colspan="8" style="color:var(--text-dim); font-style:italic; text-align:center; padding:20px;">Waiting for LP data...</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="lp-summary-bar" id="lpSummaryBar">
+      <span>Eligible Pools: <span class="lp-sum-value positive" id="lpTotalPool">$0</span>/day</span>
+      <span>Capital Deployed: <span class="lp-sum-value" id="lpTotalCapital">$0</span></span>
+      <span>Markets: <span class="lp-sum-value" id="lpEligibleCount">0/0</span> eligible</span>
+    </div>
+  </div>
+
+  <!-- ================================================================
        MIDDLE PANELS
        ================================================================ -->
   <div class="middle-panels">
@@ -1235,6 +1370,11 @@ body {
     footRunway:      $('footRunway'),
     runwayBar:       $('runwayBar'),
     themeToggle:     $('themeToggle'),
+    lpMarketsCount:  $('lpMarketsCount'),
+    lpMarketsBody:   $('lpMarketsBody'),
+    lpTotalPool:     $('lpTotalPool'),
+    lpTotalCapital:  $('lpTotalCapital'),
+    lpEligibleCount: $('lpEligibleCount'),
   };
 
   /* ==================================================================
@@ -1783,10 +1923,76 @@ body {
     }
   }
 
+  function updateLpMarkets(s) {
+    var markets = s.lp_markets || [];
+    el.lpMarketsCount.textContent = markets.length + ' market' + (markets.length !== 1 ? 's' : '');
+
+    if (markets.length === 0) {
+      el.lpMarketsBody.innerHTML = '<tr><td colspan="8" style="color:var(--text-dim); font-style:italic; text-align:center; padding:20px;">No LP orders active</td></tr>';
+      el.lpTotalPool.textContent = '$0';
+      el.lpTotalCapital.textContent = '$0';
+      el.lpEligibleCount.textContent = '0/0';
+      return;
+    }
+
+    var html = '';
+    var totalPool = 0;
+    var totalCapital = 0;
+    var eligibleCount = 0;
+
+    for (var i = 0; i < markets.length; i++) {
+      var m = markets[i];
+      var shares = m.shares || 0;
+      var minShares = m.min_shares || 0;
+      var pool = m.pool || 0;
+      var price = m.price || 0;
+      var spread = m.spread || 0;
+      var maxSpread = m.max_spread || 0;
+      var eligible = m.eligible;
+      var filled = m.filled;
+      var capital = price * shares;
+      totalCapital += capital;
+
+      var statusClass, statusText;
+      if (filled) {
+        statusClass = 'filled';
+        statusText = 'FILLED';
+      } else if (eligible) {
+        statusClass = 'eligible';
+        statusText = 'EARNING';
+        totalPool += pool;
+        eligibleCount++;
+      } else {
+        statusClass = 'ineligible';
+        statusText = 'INELIGIBLE';
+      }
+
+      var sharesColor = shares >= minShares ? 'var(--green)' : 'var(--red)';
+      var spreadColor = spread <= maxSpread ? 'var(--green)' : 'var(--red)';
+
+      html += '<tr>' +
+        '<td class="market-name-cell">' + escapeHtml(m.market || '') + '</td>' +
+        '<td>' + (m.side || '--').toUpperCase() + '</td>' +
+        '<td class="num">$' + price.toFixed(2) + '</td>' +
+        '<td class="num" style="color:' + sharesColor + '">' + shares.toFixed(0) + '/' + minShares.toFixed(0) + '</td>' +
+        '<td class="num">$' + pool.toFixed(0) + '</td>' +
+        '<td class="num" style="color:' + spreadColor + '">' + (spread * 100).toFixed(1) + '/' + (maxSpread * 100).toFixed(1) + '%</td>' +
+        '<td class="num">$' + capital.toFixed(0) + '</td>' +
+        '<td><span class="lp-status-badge ' + statusClass + '">' + statusText + '</span></td>' +
+        '</tr>';
+    }
+
+    el.lpMarketsBody.innerHTML = html;
+    el.lpTotalPool.textContent = '$' + totalPool.toFixed(0);
+    el.lpTotalCapital.textContent = '$' + totalCapital.toFixed(0);
+    el.lpEligibleCount.textContent = eligibleCount + '/' + markets.length;
+  }
+
   function handleState(state) {
     updateStats(state);
     updateChart(state);
     updateStrategies(state);
+    updateLpMarkets(state);
     updateMarkets(state);
     updateActivityLog(state);
     updateFooter(state);

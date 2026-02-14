@@ -16,6 +16,7 @@ from bot.utils.math import round_to_tick
 
 if TYPE_CHECKING:
     from bot.config import BotConfig
+    from bot.dashboard.state import DashboardState
     from bot.data.database import Database
     from bot.execution.order_manager import OrderManager
     from bot.risk.manager import RiskManager
@@ -45,9 +46,11 @@ class LiquidityStrategy(BaseStrategy):
         risk_manager: RiskManager,
         db: Database,
         event_bus: EventBus,
+        dashboard_state: DashboardState | None = None,
     ) -> None:
         super().__init__(config, clob_client, order_manager, risk_manager, db, event_bus)
         self.gamma_client = gamma_client
+        self._dashboard_state = dashboard_state
         self.scan_interval_sec = jitter_delay(
             config.lp_refresh_interval_sec, config.timing_jitter_pct
         )
@@ -68,6 +71,8 @@ class LiquidityStrategy(BaseStrategy):
         # Fill cooldown: condition_id -> timestamp of last fill (skip for 30 min)
         self._fill_cooldowns: dict[str, float] = {}
         self._fill_cooldown_sec = 1800  # 30 minutes
+        # Market metadata for dashboard: condition_id -> {question, min_shares, daily_reward, max_spread}
+        self._market_metadata: dict[str, dict] = {}
 
     # ------------------------------------------------------------------
     # Run loop override
@@ -151,10 +156,22 @@ class LiquidityStrategy(BaseStrategy):
                 target_cids.add(market.condition_id)
                 signals.append(signal)
                 active_count += 1
+                self._market_metadata[market.condition_id] = {
+                    "question": market.question,
+                    "min_shares": market.min_incentive_size,
+                    "daily_reward": market.daily_reward_usd,
+                    "max_spread": market.max_incentive_spread,
+                }
             elif market.condition_id in self._live_orders:
                 # Existing order was kept (price stable) — still an active slot
                 target_cids.add(market.condition_id)
                 active_count += 1
+                self._market_metadata[market.condition_id] = {
+                    "question": market.question,
+                    "min_shares": market.min_incentive_size,
+                    "daily_reward": market.daily_reward_usd,
+                    "max_spread": market.max_incentive_spread,
+                }
 
         # 5. Cancel orders in markets we're no longer targeting
         for cid in list(self._live_orders.keys()):
@@ -200,6 +217,30 @@ class LiquidityStrategy(BaseStrategy):
                 "signals": len(signals),
             },
         )
+
+        # Push LP market data to dashboard
+        if self._dashboard_state is not None:
+            lp_market_data = []
+            for cid, info in self._live_orders.items():
+                meta = self._market_metadata.get(cid, {})
+                question = meta.get("question", "")
+                lp_market_data.append({
+                    "market": question or cid[:16],
+                    "condition_id": cid,
+                    "side": info.get("side", ""),
+                    "price": info.get("price", 0),
+                    "shares": info.get("shares", 0),
+                    "min_shares": meta.get("min_shares", 0),
+                    "pool": meta.get("daily_reward", 0),
+                    "spread": abs(info.get("mid", 0) - info.get("price", 0)),
+                    "max_spread": meta.get("max_spread", 0),
+                    "eligible": (
+                        info.get("shares", 0) >= meta.get("min_shares", 0)
+                        and abs(info.get("mid", 0) - info.get("price", 0)) <= meta.get("max_spread", 0)
+                    ) if meta else False,
+                    "filled": cid in self._filled_positions,
+                })
+            self._dashboard_state.lp_markets = lp_market_data
 
         return signals
 
@@ -589,14 +630,19 @@ class LiquidityStrategy(BaseStrategy):
                 return None
             spread_from_mid = abs(mid - price)
 
-        # Size calculation with min share enforcement
+        # Size calculation with min share enforcement.
+        # Account for size jitter (±10%) applied by order_manager — ensure
+        # min_incentive_size is met even after worst-case jitter reduction.
+        jitter_buffer = 1.0 / (1.0 - self.config.size_jitter_pct) if self.config.size_jitter_pct > 0 else 1.0
+        min_with_buffer = market.min_incentive_size * jitter_buffer
+
         size_usd = self.config.lp_order_size_usd
         size_shares = size_usd / price
 
-        if size_shares < market.min_incentive_size:
-            needed_usd = market.min_incentive_size * price
+        if size_shares < min_with_buffer:
+            needed_usd = min_with_buffer * price
             if needed_usd <= self.config.max_per_market_usd:
-                size_shares = market.min_incentive_size
+                size_shares = min_with_buffer
                 size_usd = needed_usd
             else:
                 logger.info(
