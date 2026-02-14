@@ -163,8 +163,8 @@ def apply_event(state: DashboardState, event: BotEvent) -> None:
         state.markets_scanned = d.get("total_scanned", state.markets_scanned)
         state.avg_edge = d.get("avg_edge", state.avg_edge)
         state.markets = d.get("markets", state.markets)
-        # Append a balance snapshot so the chart always grows
-        state.balance_history.append(state.balance)
+        # Append a portfolio snapshot so the chart always grows
+        state.balance_history.append(state.balance + state.positions_value)
         if len(state.balance_history) > 300:
             state.balance_history = state.balance_history[-300:]
         state.add_log(f"{ts} | {count} contracts checked, waiting")
