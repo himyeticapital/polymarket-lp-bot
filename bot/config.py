@@ -79,11 +79,12 @@ class BotConfig(BaseSettings):
 
     # === Capital & Risk Limits ===
     starting_balance_usd: float = 500.0
+    original_deposit_usd: float = 498.0  # First deposit — used for all-time P&L
     max_drawdown_usd: float = 250.0  # Hard stop — bot halts all trading
-    max_trade_size_usd: float = 10.0  # 5% of capital per trade
+    max_trade_size_usd: float = 25.0  # 5% of capital per trade
     daily_volume_cap_usd: float = 25000.0
     max_open_positions: int = 15
-    max_per_market_usd: float = 10.0  # Max $25 per market position
+    max_per_market_usd: float = 25.0  # Max $25 per market position
     max_portfolio_exposure_usd: float = 400.0  # 80% of capital
 
     # === Arbitrage ===
@@ -99,7 +100,7 @@ class BotConfig(BaseSettings):
     lp_min_liquidity: float = 1000.0        # Min $1k order book liquidity
     lp_max_spread: float = 0.15             # Max 15% spread (skip wider markets)
     lp_min_best_bid: float = 0.02           # Best bid must be >= $0.02
-    lp_min_daily_reward: float = 0.5   # Skip markets with < $0.50/day reward
+    lp_min_daily_reward: float = 10.0   # Skip markets with < $10/day reward
     lp_max_days_to_resolve: int = 180  # Skip markets > 6 months out
 
     # === Copy Trading ===

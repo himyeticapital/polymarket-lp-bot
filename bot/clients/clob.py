@@ -154,6 +154,99 @@ class AsyncClobClient:
         raw = await asyncio.to_thread(self.client.get_trades)
         return raw if isinstance(raw, list) else []
 
+    async def get_reward_markets(self) -> list[dict]:
+        """Fetch reward-eligible markets from CLOB /rewards/markets/current.
+
+        Returns list of dicts with keys:
+          condition_id, question, tokens, daily_reward, rewards_max_spread,
+          rewards_min_size, active
+        """
+        import aiohttp
+        import ssl
+        import certifi
+
+        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+        all_items: list[dict] = []
+        cursor = ""
+        async with aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(ssl=ssl_ctx)
+        ) as session:
+            for page in range(30):  # safety pagination limit
+                params: dict[str, str] = {"limit": "100"}
+                if cursor:
+                    params["next_cursor"] = cursor
+                async with session.get(
+                    f"{self._config.clob_host}/rewards/markets/current",
+                    params=params,
+                ) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        logger.warning(
+                            "clob.rewards_page_error",
+                            status=resp.status,
+                            page=page,
+                            body=body[:200],
+                        )
+                        break
+                    data = await resp.json()
+                items = data.get("data", [])
+                cursor = data.get("next_cursor", "")
+                all_items.extend(items)
+                if not items or not cursor:
+                    break
+
+            # Filter to markets with min reward threshold, then enrich
+            reward_items = []
+            for item in all_items:
+                configs = item.get("rewards_config", [])
+                daily = sum(float(c.get("rate_per_day", 0)) for c in configs)
+                if daily >= self._config.lp_min_daily_reward:
+                    reward_items.append((daily, item))
+
+            reward_items.sort(key=lambda x: x[0], reverse=True)
+            logger.info(
+                "clob.reward_items",
+                total_fetched=len(all_items),
+                above_threshold=len(reward_items),
+                threshold=self._config.lp_min_daily_reward,
+            )
+
+            # Enrich top candidates with market metadata (question, tokens)
+            # Use 5x max_markets since many high-reward markets have extreme
+            # midpoints (< 0.10) that won't qualify for single-sided LP
+            max_enrich = self._config.lp_max_markets * 5
+            results: list[dict] = []
+            for daily, item in reward_items[:max_enrich]:
+                cid = item["condition_id"]
+                try:
+                    async with session.get(
+                        f"{self._config.clob_host}/markets/{cid}"
+                    ) as resp2:
+                        if resp2.status != 200:
+                            continue
+                        mdata = await resp2.json()
+                except Exception:
+                    continue
+
+                if not mdata.get("active", False) or mdata.get("closed", True):
+                    continue
+
+                tokens = mdata.get("tokens", [])
+                results.append({
+                    "condition_id": cid,
+                    "question": mdata.get("question", ""),
+                    "tokens": tokens,
+                    "daily_reward": daily,
+                    "rewards_max_spread": float(item.get("rewards_max_spread", 0)) / 100.0,
+                    "rewards_min_size": float(item.get("rewards_min_size", 0)),
+                    "active": True,
+                    "min_tick_size": float(mdata.get("minimum_tick_size", 0.01)),
+                    "end_date_iso": mdata.get("end_date_iso") or mdata.get("endDateIso"),
+                })
+
+        logger.info("clob.reward_markets_fetched", total=len(all_items), enriched=len(results))
+        return results
+
     @async_retry(max_attempts=3, base_delay=1.0)
     async def get_balance(self) -> float:
         """Get USDC balance from CLOB API."""

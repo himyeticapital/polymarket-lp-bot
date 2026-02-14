@@ -38,7 +38,7 @@ class Engine:
         self._event_bus: EventBus = asyncio.Queue()
         self._state = DashboardState(
             balance=config.starting_balance_usd,
-            initial_balance=config.starting_balance_usd,
+            initial_balance=config.original_deposit_usd,
         )
         self._tasks: list[asyncio.Task] = []
         self._shutdown = ShutdownHandler()
@@ -101,8 +101,8 @@ class Engine:
         # Update dashboard state with real balance
         self._state.balance = self._inventory.balance
         self._state.positions_value = self._inventory.get_total_exposure()
-        # Initial balance should reflect total portfolio (cash + positions)
-        self._state.initial_balance = self._inventory.balance + self._inventory.get_total_exposure()
+        self._state.is_dry_run = self._config.dry_run
+        # initial_balance stays as config value — P&L tracks change since bot start
 
         # Shutdown handler
         self._shutdown.register()
@@ -151,8 +151,12 @@ class Engine:
             self._tasks.append(asyncio.create_task(strat.run(), name="synth"))
 
         # Background tasks
-        scheduler = Scheduler(self._config, self._db, self._state, self._notifier)
+        scheduler = Scheduler(
+            self._config, self._db, self._state, self._notifier,
+            data_api=self._data_api,
+        )
         self._tasks.append(asyncio.create_task(scheduler.run_stats_refresh(), name="stats"))
+        self._tasks.append(asyncio.create_task(scheduler.run_profile_refresh(), name="profile"))
         self._tasks.append(asyncio.create_task(scheduler.run_health_check(), name="health"))
 
         # Dashboard (if enabled and not headless)
@@ -164,12 +168,19 @@ class Engine:
 
         # Web dashboard (browser-based)
         if self._config.enable_web_dashboard:
+            from bot.dashboard.state import process_events
+
             web_dash = WebDashboard(
                 state=self._state,
                 event_bus=self._event_bus,
                 port=self._config.web_dashboard_port,
             )
             self._tasks.append(asyncio.create_task(web_dash.run_forever(), name="web-dashboard"))
+            # Process events from bus → dashboard state (only needed when TUI is off)
+            if not self._config.enable_dashboard:
+                self._tasks.append(asyncio.create_task(
+                    process_events(self._state, self._event_bus), name="event-processor"
+                ))
 
         # Wait for shutdown signal or task failure
         shutdown_task = asyncio.create_task(self._shutdown.wait(), name="shutdown-wait")

@@ -15,7 +15,8 @@ class StrategyStats:
     name: str = ""
     trades: int = 0
     pnl: float = 0.0
-    volume: float = 0.0
+    volume: float = 0.0           # Actual fill volume only
+    order_notional: float = 0.0   # All orders placed (fills + resting)
     signals: int = 0
     last_scan: str = ""
     status: str = "idle"  # "idle", "scanning", "active", "error"
@@ -55,6 +56,11 @@ class DashboardState:
     daily_volume: float = 0.0
     api_costs: float = 0.0
 
+    # Polymarket profile stats (from API)
+    total_volume: float = 0.0       # All-time volume from leaderboard
+    lp_rewards: float = 0.0         # Total LP rewards earned
+    markets_traded: int = 0         # Unique markets traded
+
     # Balance history (sparkline data points)
     balance_history: list[float] = field(default_factory=lambda: [500.0])
 
@@ -69,6 +75,7 @@ class DashboardState:
 
     # Footer stats
     avg_bet: float = 0.0
+    _orders_notional: float = 0.0  # Total notional of all orders for avg_bet
     best_trade: float = 0.0
     worst_trade: float = 0.0
     sharpe: float = 0.0
@@ -84,6 +91,7 @@ class DashboardState:
 
     # Status
     is_halted: bool = False
+    is_dry_run: bool = False
 
     def add_log(self, message: str) -> None:
         """Add a message to the activity log (capped at 200)."""
@@ -98,9 +106,14 @@ def apply_event(state: DashboardState, event: BotEvent) -> None:
     ts = event.timestamp.strftime("%H:%M:%S")
 
     if event.type == EventType.TRADE_EXECUTED:
+        is_resting = d.get("is_resting", False)
         size = d.get("size", 0) * d.get("price", 0)
         state.total_trades += 1
-        state.daily_volume += size
+        state._orders_notional += size  # All orders for avg_bet
+
+        # Only count actual fills as volume (not resting GTC orders)
+        if not is_resting:
+            state.daily_volume += size
 
         # Use real inventory balance if provided
         if "balance" in d:
@@ -117,8 +130,8 @@ def apply_event(state: DashboardState, event: BotEvent) -> None:
             state.losses += 1
 
         symbol = d.get("market", "???")
-        side = d.get("side", "BUY")
-        state.add_log(f"{ts} | ORDER ${size:.2f} → {symbol}")
+        label = "RESTING" if is_resting else "ORDER"
+        state.add_log(f"{ts} | {label} ${size:.2f} → {symbol}")
 
         # Per-strategy tracking
         skey = _resolve_strategy_key(d.get("strategy", ""))
@@ -126,7 +139,9 @@ def apply_event(state: DashboardState, event: BotEvent) -> None:
             ss = state.strategy_stats[skey]
             ss.trades += 1
             ss.pnl = state.total_pnl  # Use overall P&L from inventory balance
-            ss.volume += size
+            ss.order_notional += size  # All orders (fills + resting)
+            if not is_resting:
+                ss.volume += size
             ss.status = "active"
 
     elif event.type == EventType.EDGE_DETECTED:
@@ -180,9 +195,8 @@ def apply_event(state: DashboardState, event: BotEvent) -> None:
             state.strategy_stats[skey].status = "error"
 
     # Update footer stats
-    total = state.wins + state.losses
-    if total > 0:
-        state.avg_bet = state.daily_volume / max(state.total_trades, 1)
+    if state.total_trades > 0:
+        state.avg_bet = state._orders_notional / state.total_trades
 
 
 async def process_events(state: DashboardState, event_bus: EventBus) -> None:

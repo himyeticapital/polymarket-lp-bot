@@ -950,25 +950,25 @@ body {
       <div class="stat-sub" id="subPnl">--%</div>
     </div>
     <div class="stat-card" data-accent="blue" id="cardWinRate">
-      <div class="stat-title">Win Rate</div>
+      <div class="stat-title">Order Success</div>
       <div class="stat-value num-transition" id="valWinRate">
         <span class="skeleton loading-placeholder">&nbsp;</span>
       </div>
-      <div class="stat-sub" id="subWinRate">--W / --L</div>
+      <div class="stat-sub" id="subWinRate">-- posted / -- rejected</div>
     </div>
     <div class="stat-card" data-accent="yellow" id="cardVolume">
-      <div class="stat-title">Daily Volume</div>
+      <div class="stat-title">Orders Placed</div>
       <div class="stat-value num-transition" id="valVolume">
         <span class="skeleton loading-placeholder">&nbsp;</span>
       </div>
-      <div class="stat-sub">24h</div>
+      <div class="stat-sub" id="subVolume">session</div>
     </div>
-    <div class="stat-card" id="cardApiCosts">
-      <div class="stat-title">API Costs</div>
-      <div class="stat-value num-transition" id="valApiCosts">
+    <div class="stat-card" data-accent="purple" id="cardTotalVol">
+      <div class="stat-title">Total Volume</div>
+      <div class="stat-value num-transition" id="valTotalVol">
         <span class="skeleton loading-placeholder">&nbsp;</span>
       </div>
-      <div class="stat-sub">self-fund</div>
+      <div class="stat-sub" id="subTotalVol">all-time</div>
     </div>
   </div>
 
@@ -1006,8 +1006,12 @@ body {
             <span class="strategy-stat-value" id="stratPnlArbitrage">$0.00</span>
           </div>
           <div class="strategy-stat-row">
-            <span class="strategy-stat-label">Volume</span>
+            <span class="strategy-stat-label">Filled</span>
             <span class="strategy-stat-value" id="stratVolArbitrage">$0.00</span>
+          </div>
+          <div class="strategy-stat-row">
+            <span class="strategy-stat-label">Placed</span>
+            <span class="strategy-stat-value" id="stratPlacedArbitrage">$0.00</span>
           </div>
           <div class="strategy-stat-row">
             <span class="strategy-stat-label">Signals</span>
@@ -1036,8 +1040,12 @@ body {
             <span class="strategy-stat-value" id="stratPnlLiquidity">$0.00</span>
           </div>
           <div class="strategy-stat-row">
-            <span class="strategy-stat-label">Volume</span>
+            <span class="strategy-stat-label">Filled</span>
             <span class="strategy-stat-value" id="stratVolLiquidity">$0.00</span>
+          </div>
+          <div class="strategy-stat-row">
+            <span class="strategy-stat-label">Placed</span>
+            <span class="strategy-stat-value" id="stratPlacedLiquidity">$0.00</span>
           </div>
           <div class="strategy-stat-row">
             <span class="strategy-stat-label">Signals</span>
@@ -1066,8 +1074,12 @@ body {
             <span class="strategy-stat-value" id="stratPnlCopyTrading">$0.00</span>
           </div>
           <div class="strategy-stat-row">
-            <span class="strategy-stat-label">Volume</span>
+            <span class="strategy-stat-label">Filled</span>
             <span class="strategy-stat-value" id="stratVolCopyTrading">$0.00</span>
+          </div>
+          <div class="strategy-stat-row">
+            <span class="strategy-stat-label">Placed</span>
+            <span class="strategy-stat-value" id="stratPlacedCopyTrading">$0.00</span>
           </div>
           <div class="strategy-stat-row">
             <span class="strategy-stat-label">Signals</span>
@@ -1096,8 +1108,12 @@ body {
             <span class="strategy-stat-value" id="stratPnlSynthEdge">$0.00</span>
           </div>
           <div class="strategy-stat-row">
-            <span class="strategy-stat-label">Volume</span>
+            <span class="strategy-stat-label">Filled</span>
             <span class="strategy-stat-value" id="stratVolSynthEdge">$0.00</span>
+          </div>
+          <div class="strategy-stat-row">
+            <span class="strategy-stat-label">Placed</span>
+            <span class="strategy-stat-value" id="stratPlacedSynthEdge">$0.00</span>
           </div>
           <div class="strategy-stat-row">
             <span class="strategy-stat-label">Signals</span>
@@ -1146,20 +1162,20 @@ body {
        ================================================================ -->
   <div class="footer-bar">
     <div class="footer-stat">
-      <span class="footer-stat-label">Avg Bet</span>
+      <span class="footer-stat-label">LP Rewards</span>
+      <span class="footer-stat-value positive num-transition" id="footLpRewards">--</span>
+    </div>
+    <div class="footer-stat">
+      <span class="footer-stat-label">Markets Traded</span>
+      <span class="footer-stat-value info num-transition" id="footMarkets">--</span>
+    </div>
+    <div class="footer-stat">
+      <span class="footer-stat-label">Avg Order</span>
       <span class="footer-stat-value num-transition" id="footAvgBet">--</span>
     </div>
     <div class="footer-stat">
       <span class="footer-stat-label">Best Trade</span>
       <span class="footer-stat-value positive num-transition" id="footBest">--</span>
-    </div>
-    <div class="footer-stat">
-      <span class="footer-stat-label">Worst Trade</span>
-      <span class="footer-stat-value negative num-transition" id="footWorst">--</span>
-    </div>
-    <div class="footer-stat">
-      <span class="footer-stat-label">Sharpe</span>
-      <span class="footer-stat-value info num-transition" id="footSharpe">--</span>
     </div>
     <div class="footer-stat">
       <div class="runway-wrap">
@@ -1202,7 +1218,8 @@ body {
     valWinRate:      $('valWinRate'),
     subWinRate:      $('subWinRate'),
     valVolume:       $('valVolume'),
-    valApiCosts:     $('valApiCosts'),
+    valTotalVol:     $('valTotalVol'),
+    subTotalVol:     $('subTotalVol'),
     balanceCanvas:   $('balanceCanvas'),
     chartLabel:      $('chartLabel'),
     marketsCount:    $('marketsCount'),
@@ -1211,10 +1228,10 @@ body {
     marketsAvgEdge:  $('marketsAvgEdge'),
     totalTrades:     $('totalTrades'),
     activityLog:     $('activityLog'),
+    footLpRewards:   $('footLpRewards'),
+    footMarkets:     $('footMarkets'),
     footAvgBet:      $('footAvgBet'),
     footBest:        $('footBest'),
-    footWorst:       $('footWorst'),
-    footSharpe:      $('footSharpe'),
     footRunway:      $('footRunway'),
     runwayBar:       $('runwayBar'),
     themeToggle:     $('themeToggle'),
@@ -1252,6 +1269,7 @@ body {
       trades: $('stratTrades' + suffix),
       pnl:    $('stratPnl' + suffix),
       vol:    $('stratVol' + suffix),
+      placed: $('stratPlaced' + suffix),
       sig:    $('stratSig' + suffix),
       scan:   $('stratScan' + suffix),
     };
@@ -1546,13 +1564,14 @@ body {
 
     /* Win Rate */
     animateValue(el.valWinRate, fmtPct(s.win_rate), null);
-    el.subWinRate.textContent = s.wins + 'W / ' + s.losses + 'L';
+    el.subWinRate.textContent = s.wins + ' posted / ' + s.losses + ' rejected';
 
-    /* Volume */
-    animateValue(el.valVolume, fmtUSDPlain(s.daily_volume), null);
+    /* Orders placed (count) */
+    animateValue(el.valVolume, String(s.total_trades || 0), null);
 
-    /* API Costs */
-    animateValue(el.valApiCosts, fmtUSDPlain(s.api_costs), null);
+    /* Total Volume (all-time from Polymarket) */
+    animateValue(el.valTotalVol, fmtUSDPlain(s.total_volume), null);
+    el.subTotalVol.textContent = (s.markets_traded || 0) + ' markets';
   }
 
   function updateChart(s) {
@@ -1635,15 +1654,24 @@ body {
   }
 
   function updateFooter(s) {
+    /* LP Rewards */
+    var rewards = s.lp_rewards;
+    if (rewards != null && rewards > 0) {
+      el.footLpRewards.textContent = '+$' + rewards.toFixed(4);
+      el.footLpRewards.className = 'footer-stat-value positive num-transition';
+    } else {
+      el.footLpRewards.textContent = '$0.00';
+      el.footLpRewards.className = 'footer-stat-value num-transition';
+    }
+
+    /* Markets traded */
+    animateValue(el.footMarkets, String(s.markets_traded || 0), null);
+
+    /* Avg Order */
     animateValue(el.footAvgBet, s.avg_bet != null ? '$' + s.avg_bet.toFixed(2) : '--', null);
 
     var best = s.best_trade;
     el.footBest.textContent = best != null ? '+$' + best.toFixed(2) : '--';
-
-    var worst = s.worst_trade;
-    el.footWorst.textContent = worst != null ? '-$' + Math.abs(worst).toFixed(2) : '--';
-
-    animateValue(el.footSharpe, s.sharpe != null ? s.sharpe.toFixed(2) : '--', null);
 
     var runway = s.runway_pct;
     el.footRunway.textContent = runway != null ? runway.toFixed(0) + '%' : '--%';
@@ -1666,9 +1694,9 @@ body {
       el.badgeHalted.classList.remove('visible');
     }
 
-    /* Dry run detection: has trades but PnL is basically zero */
-    var isDryRun = (s.total_trades > 0 && Math.abs(s.total_pnl) < 0.01);
-    if (isDryRun) {
+    /* Dry run badge — only show if server explicitly reports dry run */
+    /* (P&L = $0 is normal for resting LP orders, not an indicator of dry run) */
+    if (s.is_dry_run) {
       el.badgeDryRun.classList.add('visible');
     } else {
       el.badgeDryRun.classList.remove('visible');
@@ -1695,6 +1723,7 @@ body {
         refs.pnl.textContent = '--';
         refs.pnl.className = 'strategy-stat-value';
         refs.vol.textContent = '--';
+        refs.placed.textContent = '--';
         refs.sig.textContent = '--';
         refs.scan.textContent = 'last scan: --';
         continue;
@@ -1736,9 +1765,13 @@ body {
         refs.pnl.className = 'strategy-stat-value';
       }
 
-      /* Volume */
+      /* Filled volume */
       var vol = data.volume != null ? data.volume : 0;
       refs.vol.textContent = fmtUSDPlain(vol);
+
+      /* Placed (all orders including resting) */
+      var placed = data.order_notional != null ? data.order_notional : 0;
+      refs.placed.textContent = fmtUSDPlain(placed);
 
       /* Signals */
       var sig = data.signals != null ? data.signals : 0;

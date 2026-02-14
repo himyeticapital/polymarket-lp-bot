@@ -80,3 +80,44 @@ class DataApiClient:
             resp.raise_for_status()
             data = await resp.json()
         return data if isinstance(data, list) else []
+
+    @async_retry(max_attempts=3, base_delay=1.0)
+    async def get_profile_stats(self, address: str) -> dict:
+        """Fetch total volume and PnL from leaderboard API."""
+        params = {"user": address, "timePeriod": "ALL", "orderBy": "VOL"}
+        async with self.session.get(
+            f"{self._base_url}/v1/leaderboard", params=params
+        ) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
+        if isinstance(data, list) and data:
+            return data[0]
+        return {}
+
+    @async_retry(max_attempts=3, base_delay=1.0)
+    async def get_rewards_earned(self, address: str) -> float:
+        """Sum up LP rewards from activity feed (type=MAKER_REBATE + REWARD)."""
+        total = 0.0
+        for rtype in ("MAKER_REBATE", "REWARD"):
+            params = {"user": address, "type": rtype, "limit": 500}
+            async with self.session.get(
+                f"{self._base_url}/activity", params=params
+            ) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+            if isinstance(data, list):
+                for entry in data:
+                    total += abs(float(entry.get("cash", 0) or 0))
+        return total
+
+    @async_retry(max_attempts=3, base_delay=1.0)
+    async def get_markets_traded(self, address: str) -> int:
+        """Get count of unique markets traded."""
+        async with self.session.get(
+            f"{self._base_url}/traded", params={"user": address}
+        ) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
+        if isinstance(data, dict):
+            return int(data.get("traded", 0))
+        return 0

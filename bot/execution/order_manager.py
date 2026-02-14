@@ -170,24 +170,31 @@ class OrderManager:
         try:
             await insert_trade(self.db, result)
             if result.success:
-                fill_size = result.fill_size or result.signal.size
-                fill_price = result.fill_price or result.signal.price
-                volume = fill_size * fill_price
-                await update_daily_volume(self.db, result.signal.strategy, volume)
+                # Only count actual fills as volume (skip resting GTC orders)
+                fill_size = result.fill_size or 0
+                fill_price = result.fill_price or 0
+                if fill_size > 0 and fill_price > 0:
+                    volume = fill_size * fill_price
+                    await update_daily_volume(self.db, result.signal.strategy, volume)
         except Exception:
             logger.exception("order.log_failed")
 
     def _publish_trade_event(self, result: OrderResult) -> None:
-        fill_price = result.fill_price or result.signal.price
-        fill_size = result.fill_size or result.signal.size
+        # Use actual fill values; 0 for resting GTC orders
+        fill_price = result.fill_price or 0
+        fill_size = result.fill_size or 0
+        is_resting = result.success and fill_size == 0
         event = BotEvent(
             type=EventType.TRADE_EXECUTED,
             data={
                 "strategy": result.signal.strategy,
                 "token_id": result.signal.token_id,
                 "side": result.signal.side,
-                "price": fill_price,
-                "size": fill_size,
+                "price": fill_price or result.signal.price,
+                "size": fill_size or result.signal.size,
+                "fill_price": fill_price,
+                "fill_size": fill_size,
+                "is_resting": is_resting,
                 "success": result.success,
                 "order_id": result.order_id,
                 "is_dry_run": result.is_dry_run,
