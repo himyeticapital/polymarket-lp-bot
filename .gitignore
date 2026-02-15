@@ -32,6 +32,8 @@ Thumbs.db
 *.log
 nohup.out
 .vscode/settings.json
+.config/
+PROJECT_NOTES.md
 
 # Coverage
 htmlcov/
