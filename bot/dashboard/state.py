@@ -28,12 +28,14 @@ _STRATEGY_KEY_MAP: dict[str, str] = {
     Strategy.LIQUIDITY: "liquidity",
     Strategy.COPY_TRADING: "copy_trading",   # Strategy.COPY_TRADING == "copy"
     Strategy.SYNTH_EDGE: "synth_edge",
+    Strategy.LP_FLIP: "lp_flip",
     # Also allow raw dict-key strings coming in directly
     "arbitrage": "arbitrage",
     "liquidity": "liquidity",
     "copy_trading": "copy_trading",
     "copy": "copy_trading",
     "synth_edge": "synth_edge",
+    "lp_flip": "lp_flip",
 }
 
 
@@ -89,6 +91,7 @@ class DashboardState:
         "liquidity": StrategyStats(name="LP Rewards"),
         "copy_trading": StrategyStats(name="Copy Trading"),
         "synth_edge": StrategyStats(name="Synth Edge"),
+        "lp_flip": StrategyStats(name="Didi Flip"),
     })
 
     # Status
@@ -97,6 +100,18 @@ class DashboardState:
 
     # LP controls (toggled via dashboard)
     lp_auto_close: bool = False  # If True, sell filled positions immediately
+    lp_enabled: bool = False     # Strategy 1 active (set by strategy selector)
+
+    # LP Flip (Strategy 2) state
+    lp_flip_enabled: bool = False
+    lp_flip_phase: str = "idle"
+    lp_flip_market: str = ""
+    lp_flip_entry_side: str = ""
+    lp_flip_entry_price: float = 0.0
+    lp_flip_exit_price: float = 0.0
+    lp_flip_total_profit: float = 0.0
+    lp_flip_total_flips: int = 0
+    lp_flip_recent_flips: list[dict] = field(default_factory=list)
 
     def add_log(self, message: str) -> None:
         """Add a message to the activity log (capped at 200)."""

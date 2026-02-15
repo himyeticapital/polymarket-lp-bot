@@ -443,7 +443,7 @@ body {
    =================================================================== */
 .strategy-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 14px;
 }
 
@@ -916,6 +916,58 @@ body {
   background: var(--yellow-dim);
 }
 
+/* Strategy selector */
+.strategy-selector-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 18px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 14px;
+}
+.strategy-selector-bar label {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.strategy-selector-bar select {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 2px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.strategy-selector-bar select:focus {
+  border-color: var(--blue);
+}
+.strategy-selector-bar .active-label {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.strategy-selector-bar .active-label.running {
+  color: var(--green);
+  background: var(--green-dim);
+}
+.strategy-selector-bar .active-label.stopped {
+  color: var(--text-dim);
+  background: var(--bar-track);
+}
+
 .lp-auto-close-btn {
   font-family: var(--font-mono);
   font-size: 0.85rem;
@@ -960,6 +1012,23 @@ body {
 .lp-summary-bar .lp-sum-value.positive {
   color: var(--green);
 }
+
+/* ===================================================================
+   FLIP PHASE BADGES
+   =================================================================== */
+.flip-phase-badge {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  padding: 4px 12px;
+  border-radius: 20px;
+  text-transform: uppercase;
+  display: inline-block;
+}
+.flip-phase-badge.idle { color: var(--text-dim); background: var(--bar-track); }
+.flip-phase-badge.resting_entry { color: var(--blue); background: rgba(96, 165, 250, 0.12); }
+.flip-phase-badge.resting_exit { color: var(--yellow); background: rgba(251, 191, 36, 0.12); }
 
 /* ===================================================================
    RESPONSIVE
@@ -1056,6 +1125,18 @@ body {
         </svg>
       </button>
     </div>
+  </div>
+
+  <!-- ================================================================
+       STRATEGY SELECTOR
+       ================================================================ -->
+  <div class="strategy-selector-bar">
+    <label>Active LP Strategy:</label>
+    <select id="strategySelect" onchange="switchStrategy(this.value)">
+      <option value="didi_flip">Strategy 2: Didi Flip (1 market, flip on fill)</option>
+      <option value="multi_market">Strategy 1: Multi-Market LP (multiple markets)</option>
+    </select>
+    <span class="active-label stopped" id="strategyActiveLabel">STOPPED</span>
   </div>
 
   <!-- ================================================================
@@ -1251,6 +1332,28 @@ body {
       </div>
     </div>
 
+    <!-- Didi Flip -->
+    <div class="strategy-card" data-accent="purple" data-strategy="lp_flip">
+      <div class="strategy-card-header">
+        <div class="strategy-card-title">
+          <span class="strategy-status-dot" id="stratDotLpFlip"></span>
+          Didi Flip
+        </div>
+        <span class="strategy-status-label" id="stratStatusLpFlip">idle</span>
+      </div>
+      <div class="strategy-card-body">
+        <div class="strategy-trades-count" id="stratTradesLpFlip">0</div>
+        <div class="strategy-trades-label">trades</div>
+        <div class="strategy-stats-list">
+          <div class="strategy-stat-row"><span class="strategy-stat-label">P&amp;L</span><span class="strategy-stat-value" id="stratPnlLpFlip">$0.00</span></div>
+          <div class="strategy-stat-row"><span class="strategy-stat-label">Filled</span><span class="strategy-stat-value" id="stratVolLpFlip">$0.00</span></div>
+          <div class="strategy-stat-row"><span class="strategy-stat-label">Placed</span><span class="strategy-stat-value" id="stratPlacedLpFlip">$0.00</span></div>
+          <div class="strategy-stat-row"><span class="strategy-stat-label">Signals</span><span class="strategy-stat-value" id="stratSigLpFlip">0</span></div>
+        </div>
+        <div class="strategy-last-scan" id="stratScanLpFlip">last scan: --</div>
+      </div>
+    </div>
+
   </div>
 
   <!-- ================================================================
@@ -1258,7 +1361,7 @@ body {
        ================================================================ -->
   <div class="card" id="lpMarketsPanel">
     <div class="card-header">
-      LP Markets
+      Strategy 1: Multi-Market LP
       <span class="count" id="lpMarketsCount">0 markets</span>
       <button id="lpAutoCloseBtn" class="lp-auto-close-btn off" onclick="toggleAutoClose()">Auto-Close: OFF</button>
     </div>
@@ -1287,6 +1390,55 @@ body {
       <span>Filled P&L: <span class="lp-sum-value" id="lpFilledPnl">$0</span></span>
       <span>Max Loss: <span class="lp-sum-value" id="lpMaxLoss">$0</span></span>
       <span><span class="lp-sum-value" id="lpEligibleCount">0/0</span> eligible</span>
+    </div>
+  </div>
+
+  <!-- ================================================================
+       STRATEGY 2: DIDI FLIP
+       ================================================================ -->
+  <div class="card" id="flipPanel">
+    <div class="card-header">
+      Strategy 2: Didi Flip
+      <span class="count" id="flipPhaseLabel">IDLE</span>
+      <button id="flipToggleBtn" class="lp-auto-close-btn off" onclick="toggleFlip()">Flip: OFF</button>
+    </div>
+    <div style="padding: 14px 18px;">
+      <div id="flipCycleInfo" style="display:none;">
+        <div style="display:flex;gap:20px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+          <div>
+            <span style="font-size:0.65rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;">Market</span><br>
+            <span id="flipMarket" style="font-family:var(--font-mono);font-size:0.85rem;font-weight:600;"></span>
+          </div>
+          <div>
+            <span style="font-size:0.65rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;">Phase</span><br>
+            <span id="flipPhaseBadge" class="flip-phase-badge idle">IDLE</span>
+          </div>
+          <div>
+            <span style="font-size:0.65rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;">Side</span><br>
+            <span id="flipSide" style="font-family:var(--font-mono);font-size:0.85rem;font-weight:600;">--</span>
+          </div>
+          <div>
+            <span style="font-size:0.65rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;">Entry</span><br>
+            <span id="flipEntryPrice" style="font-family:var(--font-mono);font-size:0.85rem;font-weight:600;">--</span>
+          </div>
+          <div>
+            <span style="font-size:0.65rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;">Exit Target</span><br>
+            <span id="flipExitPrice" style="font-family:var(--font-mono);font-size:0.85rem;font-weight:600;">--</span>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:20px;font-family:var(--font-mono);font-size:0.72rem;color:var(--text-dim);">
+        <span>Flips: <span style="color:var(--text);font-weight:600;" id="flipTotalCount">0</span></span>
+        <span>P&L: <span style="font-weight:600;" id="flipTotalProfit">$0.00</span></span>
+      </div>
+      <div style="margin-top:10px;max-height:180px;overflow-y:auto;">
+        <table class="lp-markets-table" style="font-size:0.68rem;">
+          <thead><tr><th>Market</th><th>Side</th><th>Entry</th><th>Exit</th><th>Profit</th></tr></thead>
+          <tbody id="flipHistoryBody">
+            <tr><td colspan="5" style="color:var(--text-dim);font-style:italic;text-align:center;padding:14px;">No completed flips yet</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -1407,12 +1559,23 @@ body {
     lpFilledPnl:     $('lpFilledPnl'),
     lpMaxLoss:       $('lpMaxLoss'),
     lpEligibleCount: $('lpEligibleCount'),
+    flipPhaseLabel: $('flipPhaseLabel'),
+    flipToggleBtn: $('flipToggleBtn'),
+    flipCycleInfo: $('flipCycleInfo'),
+    flipMarket: $('flipMarket'),
+    flipPhaseBadge: $('flipPhaseBadge'),
+    flipSide: $('flipSide'),
+    flipEntryPrice: $('flipEntryPrice'),
+    flipExitPrice: $('flipExitPrice'),
+    flipTotalCount: $('flipTotalCount'),
+    flipTotalProfit: $('flipTotalProfit'),
+    flipHistoryBody: $('flipHistoryBody'),
   };
 
   /* ==================================================================
      STRATEGY DOM REFS — keyed by WebSocket field name
      ================================================================== */
-  var strategyKeys = ['arbitrage', 'liquidity', 'copy_trading', 'synth_edge'];
+  var strategyKeys = ['arbitrage', 'liquidity', 'copy_trading', 'synth_edge', 'lp_flip'];
 
   /* Map from WS key -> DOM suffix used in IDs */
   var stratIdMap = {
@@ -1420,6 +1583,7 @@ body {
     liquidity:    'Liquidity',
     copy_trading: 'CopyTrading',
     synth_edge:   'SynthEdge',
+    lp_flip:      'LpFlip',
   };
 
   /* Map from WS key -> accent CSS variable for status dots */
@@ -1428,6 +1592,7 @@ body {
     liquidity:    'var(--blue)',
     copy_trading: 'var(--yellow)',
     synth_edge:   'var(--purple)',
+    lp_flip:      'var(--purple)',
   };
 
   /* Build per-strategy element references */
@@ -1975,6 +2140,106 @@ body {
   /* Expose to onclick */
   window.toggleAutoClose = toggleAutoClose;
 
+  function toggleFlip() {
+    fetch('/api/lp-flip/toggle', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) { syncFlipBtn(d.lp_flip_enabled); });
+  }
+  window.toggleFlip = toggleFlip;
+
+  function syncFlipBtn(enabled) {
+    var btn = el.flipToggleBtn;
+    if (!btn) return;
+    if (enabled) {
+      btn.textContent = 'Flip: ON';
+      btn.className = 'lp-auto-close-btn on';
+    } else {
+      btn.textContent = 'Flip: OFF';
+      btn.className = 'lp-auto-close-btn off';
+    }
+  }
+
+  /* ----------------------------------------------------------------
+     STRATEGY SELECTOR — switch between Didi Flip and Multi-Market LP
+     ---------------------------------------------------------------- */
+  function switchStrategy(val) {
+    fetch('/api/strategy/switch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ strategy: val })
+    }).then(function(r) { return r.json(); })
+      .then(function(d) { updateStrategySelector(d); });
+  }
+  window.switchStrategy = switchStrategy;
+
+  function updateStrategySelector(s) {
+    var sel = document.getElementById('strategySelect');
+    var label = document.getElementById('strategyActiveLabel');
+    if (!sel || !label) return;
+
+    var flipOn = s.lp_flip_enabled || false;
+    var lpOn = s.lp_enabled || false;
+
+    if (flipOn) {
+      sel.value = 'didi_flip';
+      label.textContent = 'RUNNING';
+      label.className = 'active-label running';
+    } else if (lpOn) {
+      sel.value = 'multi_market';
+      label.textContent = 'RUNNING';
+      label.className = 'active-label running';
+    } else {
+      label.textContent = 'STOPPED';
+      label.className = 'active-label stopped';
+    }
+
+    // Show/hide panels based on active strategy
+    var lpPanel = document.getElementById('lpMarketsPanel');
+    var flipPanel = document.getElementById('flipPanel');
+    if (lpPanel) lpPanel.style.display = flipOn && !lpOn ? 'none' : 'block';
+    if (flipPanel) flipPanel.style.display = flipOn ? 'block' : 'none';
+  }
+
+  function updateFlipPanel(s) {
+    syncFlipBtn(s.lp_flip_enabled || false);
+    var phase = s.lp_flip_phase || 'idle';
+    var phaseLabels = {'idle':'IDLE','resting_entry':'RESTING ENTRY','resting_exit':'RESTING EXIT'};
+    if (el.flipPhaseLabel) el.flipPhaseLabel.textContent = phaseLabels[phase] || phase.toUpperCase();
+    var market = s.lp_flip_market || '';
+    if (market && el.flipCycleInfo) {
+      el.flipCycleInfo.style.display = 'block';
+      el.flipMarket.textContent = market;
+      el.flipPhaseBadge.textContent = phaseLabels[phase] || phase.toUpperCase();
+      el.flipPhaseBadge.className = 'flip-phase-badge ' + phase;
+      el.flipSide.textContent = (s.lp_flip_entry_side || '--').toUpperCase();
+      el.flipEntryPrice.textContent = s.lp_flip_entry_price ? '$' + s.lp_flip_entry_price.toFixed(3) : '--';
+      el.flipExitPrice.textContent = s.lp_flip_exit_price ? '$' + s.lp_flip_exit_price.toFixed(3) : '--';
+    } else if (el.flipCycleInfo) {
+      el.flipCycleInfo.style.display = 'none';
+    }
+    if (el.flipTotalCount) el.flipTotalCount.textContent = s.lp_flip_total_flips || 0;
+    var profit = s.lp_flip_total_profit || 0;
+    if (el.flipTotalProfit) {
+      el.flipTotalProfit.textContent = (profit >= 0 ? '+' : '') + '$' + profit.toFixed(4);
+      el.flipTotalProfit.style.color = profit >= 0 ? 'var(--green)' : 'var(--red)';
+    }
+    var flips = s.lp_flip_recent_flips || [];
+    if (el.flipHistoryBody) {
+      if (flips.length === 0) {
+        el.flipHistoryBody.innerHTML = '<tr><td colspan="5" style="color:var(--text-dim);font-style:italic;text-align:center;padding:14px;">No completed flips yet</td></tr>';
+      } else {
+        var html = '';
+        for (var i = flips.length - 1; i >= 0; i--) {
+          var f = flips[i];
+          var pColor = (f.profit || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+          var pSign = (f.profit || 0) >= 0 ? '+' : '';
+          html += '<tr><td class="market-name-cell">' + (f.market || '') + '</td><td>' + (f.entry_side || '--').toUpperCase() + '</td><td class="num">$' + (f.entry_price || 0).toFixed(3) + '</td><td class="num">$' + (f.exit_price || 0).toFixed(3) + '</td><td class="num" style="color:' + pColor + '">' + pSign + '$' + (f.profit || 0).toFixed(4) + '</td></tr>';
+        }
+        el.flipHistoryBody.innerHTML = html;
+      }
+    }
+  }
+
   function updateLpMarkets(s) {
     /* Sync auto-close button from server state */
     syncAutoCloseBtn(s.lp_auto_close || false);
@@ -2089,7 +2354,9 @@ body {
     updateStats(state);
     updateChart(state);
     updateStrategies(state);
+    updateStrategySelector(state);
     updateLpMarkets(state);
+    updateFlipPanel(state);
     updateMarkets(state);
     updateActivityLog(state);
     updateFooter(state);

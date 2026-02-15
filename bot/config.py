@@ -72,6 +72,7 @@ class BotConfig(BaseSettings):
     enable_arbitrage: bool = True
     enable_liquidity: bool = True
     enable_copy_trading: bool = True
+    enable_lp_flip: bool = False
     enable_synth_edge: bool = True
     enable_dashboard: bool = True
     enable_web_dashboard: bool = True
@@ -103,6 +104,13 @@ class BotConfig(BaseSettings):
     lp_min_daily_reward: float = 10.0   # Skip markets with < $10/day reward
     lp_min_estimated_reward: float = 1.0  # Skip markets where our est. daily reward < $1
     lp_max_days_to_resolve: int = 180  # Skip markets > 6 months out
+
+    # === LP Flip (Strategy 2 — Didi Flip) ===
+    lp_flip_order_size_usd: float = 25.0
+    lp_flip_poll_interval_sec: float = 30.0
+    lp_flip_scan_interval_sec: float = 60.0
+    lp_flip_stop_loss_pct: float = 0.25
+    lp_flip_max_resting_sec: float = 3600.0
 
     # === Copy Trading ===
     copy_traders: str = ""  # Comma-separated addresses

@@ -103,7 +103,75 @@ CREATE TABLE IF NOT EXISTS bot_state (
 """
 
 
+MIGRATION_LP_FLIP_SQL = """
+-- Add lp_flip_volume column to daily_volume (idempotent via IF NOT EXISTS workaround)
+ALTER TABLE daily_volume ADD COLUMN lp_flip_volume REAL NOT NULL DEFAULT 0;
+
+-- Flip cycle tracking for LP Flip (Strategy 2)
+CREATE TABLE IF NOT EXISTS flip_cycles (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    condition_id    TEXT NOT NULL,
+    market_question TEXT DEFAULT '',
+    entry_side      TEXT NOT NULL,
+    entry_token_id  TEXT NOT NULL,
+    entry_price     REAL NOT NULL,
+    entry_shares    REAL NOT NULL,
+    entry_order_id  TEXT,
+    entry_filled_at TEXT,
+    exit_side       TEXT,
+    exit_token_id   TEXT,
+    exit_price      REAL,
+    exit_shares     REAL,
+    exit_order_id   TEXT,
+    exit_filled_at  TEXT,
+    profit          REAL,
+    status          TEXT NOT NULL DEFAULT 'open',
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_flip_cycles_condition ON flip_cycles(condition_id);
+CREATE INDEX IF NOT EXISTS idx_flip_cycles_status ON flip_cycles(status);
+"""
+
+
 async def run_migrations(db: aiosqlite.Connection) -> None:
-    """Create all tables if they don't exist."""
+    """Create all tables if they don't exist, then run incremental migrations."""
     await db.executescript(SCHEMA_SQL)
+
+    # Incremental migration: add lp_flip_volume column + flip_cycles table
+    # ALTER TABLE ADD COLUMN is not idempotent, so check first
+    cursor = await db.execute("PRAGMA table_info(daily_volume)")
+    columns = {row[1] for row in await cursor.fetchall()}
+    if "lp_flip_volume" not in columns:
+        await db.execute(
+            "ALTER TABLE daily_volume ADD COLUMN lp_flip_volume REAL NOT NULL DEFAULT 0"
+        )
+
+    # flip_cycles table (CREATE IF NOT EXISTS is idempotent)
+    await db.executescript("""
+CREATE TABLE IF NOT EXISTS flip_cycles (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    condition_id    TEXT NOT NULL,
+    market_question TEXT DEFAULT '',
+    entry_side      TEXT NOT NULL,
+    entry_token_id  TEXT NOT NULL,
+    entry_price     REAL NOT NULL,
+    entry_shares    REAL NOT NULL,
+    entry_order_id  TEXT,
+    entry_filled_at TEXT,
+    exit_side       TEXT,
+    exit_token_id   TEXT,
+    exit_price      REAL,
+    exit_shares     REAL,
+    exit_order_id   TEXT,
+    exit_filled_at  TEXT,
+    profit          REAL,
+    status          TEXT NOT NULL DEFAULT 'open',
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_flip_cycles_condition ON flip_cycles(condition_id);
+CREATE INDEX IF NOT EXISTS idx_flip_cycles_status ON flip_cycles(status);
+""")
+
     await db.commit()

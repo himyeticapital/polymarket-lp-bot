@@ -24,6 +24,7 @@ from bot.risk.manager import RiskManager
 from bot.strategies.arbitrage import ArbitrageStrategy
 from bot.strategies.copy_trading import CopyTradingStrategy
 from bot.strategies.liquidity import LiquidityStrategy
+from bot.strategies.liquidity_flip import LiquidityFlipStrategy
 from bot.strategies.synth_edge import SynthEdgeStrategy
 from bot.types import EventBus
 
@@ -102,6 +103,8 @@ class Engine:
         self._state.balance = self._inventory.balance
         self._state.positions_value = self._inventory.get_total_exposure()
         self._state.is_dry_run = self._config.dry_run
+        self._state.lp_enabled = self._config.enable_liquidity
+        self._state.lp_flip_enabled = self._config.enable_lp_flip
         # initial_balance stays as config value — P&L tracks change since bot start
 
         # Shutdown handler
@@ -114,6 +117,7 @@ class Engine:
             strategies={
                 "arb": self._config.enable_arbitrage,
                 "lp": self._config.enable_liquidity,
+                "lp_flip": self._config.enable_lp_flip,
                 "copy": self._config.enable_copy_trading,
                 "synth": self._config.enable_synth_edge,
             },
@@ -136,6 +140,14 @@ class Engine:
                 dashboard_state=self._state,
             )
             self._tasks.append(asyncio.create_task(strat.run(), name="lp"))
+
+        if self._config.enable_lp_flip:
+            strat = LiquidityFlipStrategy(
+                self._config, self._clob, self._gamma,
+                self._order_mgr, self._risk, self._db, self._event_bus,
+                dashboard_state=self._state,
+            )
+            self._tasks.append(asyncio.create_task(strat.run(), name="lp_flip"))
 
         if self._config.enable_copy_trading:
             strat = CopyTradingStrategy(

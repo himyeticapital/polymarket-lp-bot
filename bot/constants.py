@@ -33,6 +33,7 @@ WS_MAX_INSTRUMENTS = 500  # per connection
 class Strategy(StrEnum):
     ARBITRAGE = "arbitrage"
     LIQUIDITY = "liquidity"
+    LP_FLIP = "lp_flip"
     COPY_TRADING = "copy"
     SYNTH_EDGE = "synth_edge"
 

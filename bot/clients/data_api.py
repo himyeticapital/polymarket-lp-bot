@@ -107,7 +107,7 @@ class DataApiClient:
                 data = await resp.json()
             if isinstance(data, list):
                 for entry in data:
-                    total += abs(float(entry.get("cash", 0) or 0))
+                    total += abs(float(entry.get("usdcSize", 0) or entry.get("size", 0) or 0))
         return total
 
     @async_retry(max_attempts=3, base_delay=1.0)

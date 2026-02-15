@@ -45,6 +45,8 @@ class WebDashboard:
         self._app.router.add_get("/ws", self._handle_ws)
         self._app.router.add_get("/api/state", self._handle_api_state)
         self._app.router.add_post("/api/lp/auto-close", self._handle_toggle_auto_close)
+        self._app.router.add_post("/api/lp-flip/toggle", self._handle_toggle_lp_flip)
+        self._app.router.add_post("/api/strategy/switch", self._handle_strategy_switch)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -90,6 +92,31 @@ class WebDashboard:
         self._state.lp_auto_close = not self._state.lp_auto_close
         logger.info("lp.auto_close_toggled", enabled=self._state.lp_auto_close)
         return web.json_response({"lp_auto_close": self._state.lp_auto_close})
+
+    async def _handle_toggle_lp_flip(self, request: web.Request) -> web.Response:
+        self._state.lp_flip_enabled = not self._state.lp_flip_enabled
+        logger.info("lp_flip.toggled", enabled=self._state.lp_flip_enabled)
+        return web.json_response({"lp_flip_enabled": self._state.lp_flip_enabled})
+
+    async def _handle_strategy_switch(self, request: web.Request) -> web.Response:
+        data = await request.json()
+        choice = data.get("strategy", "didi_flip")
+        if choice == "didi_flip":
+            self._state.lp_flip_enabled = True
+            self._state.lp_enabled = False
+        elif choice == "multi_market":
+            self._state.lp_flip_enabled = False
+            self._state.lp_enabled = True
+        else:
+            self._state.lp_flip_enabled = False
+            self._state.lp_enabled = False
+        logger.info("strategy.switched", choice=choice,
+                     lp_flip=self._state.lp_flip_enabled,
+                     lp=self._state.lp_enabled)
+        return web.json_response({
+            "lp_flip_enabled": self._state.lp_flip_enabled,
+            "lp_enabled": self._state.lp_enabled,
+        })
 
     async def _handle_ws(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse()
@@ -167,6 +194,16 @@ class WebDashboard:
             "is_halted": s.is_halted,
             "is_dry_run": s.is_dry_run,
             "lp_auto_close": s.lp_auto_close,
+            "lp_enabled": s.lp_enabled,
+            "lp_flip_enabled": s.lp_flip_enabled,
+            "lp_flip_phase": s.lp_flip_phase,
+            "lp_flip_market": s.lp_flip_market,
+            "lp_flip_entry_side": s.lp_flip_entry_side,
+            "lp_flip_entry_price": s.lp_flip_entry_price,
+            "lp_flip_exit_price": s.lp_flip_exit_price,
+            "lp_flip_total_profit": round(s.lp_flip_total_profit, 4),
+            "lp_flip_total_flips": s.lp_flip_total_flips,
+            "lp_flip_recent_flips": s.lp_flip_recent_flips[:10],
             "strategies": {
                 key: {
                     "name": ss.name,

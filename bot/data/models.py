@@ -46,6 +46,7 @@ async def update_daily_volume(
     col = {
         Strategy.ARBITRAGE: "arb_volume",
         Strategy.LIQUIDITY: "lp_volume",
+        Strategy.LP_FLIP: "lp_flip_volume",
         Strategy.COPY_TRADING: "copy_volume",
         Strategy.SYNTH_EDGE: "synth_volume",
     }[strategy]
