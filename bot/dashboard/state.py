@@ -99,7 +99,7 @@ class DashboardState:
     is_dry_run: bool = False
 
     # LP controls (toggled via dashboard)
-    lp_auto_close: bool = False  # If True, sell filled positions immediately
+    lp_auto_close: bool = True  # If True, sell filled positions immediately
     lp_enabled: bool = False     # Strategy 1 active (set by strategy selector)
 
     # LP Flip (Strategy 2) state

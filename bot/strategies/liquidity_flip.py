@@ -181,6 +181,14 @@ class LiquidityFlipStrategy(BaseStrategy):
         markets = self._convert_reward_markets(reward_markets)
         ranked = self._rank_markets(markets)
 
+        # Publish scan event so dashboard updates
+        self._publish_event(EventType.MARKET_SCANNED, {
+            "strategy": Strategy.LP_FLIP,
+            "count": len(ranked),
+            "total_scanned": len(markets),
+            "signals": len(ranked),
+        })
+
         if not ranked:
             logger.info("lp_flip.no_eligible_markets")
             return
@@ -221,6 +229,17 @@ class LiquidityFlipStrategy(BaseStrategy):
                     shares=round(entry.entry_shares, 1),
                     order_id=entry.entry_order_id[:16] if entry.entry_order_id else "",
                 )
+
+                # Publish order event for dashboard tracking
+                self._publish_event(EventType.TRADE_EXECUTED, {
+                    "strategy": Strategy.LP_FLIP,
+                    "market": market.question[:40],
+                    "side": "BUY",
+                    "price": entry.entry_price,
+                    "size": entry.entry_shares,
+                    "is_resting": True,
+                    "success": True,
+                })
                 return
 
         logger.info("lp_flip.no_viable_entry", tried=len(ranked))
@@ -288,6 +307,17 @@ class LiquidityFlipStrategy(BaseStrategy):
             await update_daily_volume(self.db, Strategy.LP_FLIP, volume)
         except Exception:
             pass
+
+        # Publish fill event
+        self._publish_event(EventType.TRADE_EXECUTED, {
+            "strategy": Strategy.LP_FLIP,
+            "market": cycle.market_question[:40],
+            "side": "BUY",
+            "price": cycle.entry_price,
+            "size": cycle.entry_shares,
+            "is_resting": False,
+            "success": True,
+        })
 
         # Place exit order on opposite side
         exit_placed = await self._place_exit_order(cycle)
@@ -641,6 +671,17 @@ class LiquidityFlipStrategy(BaseStrategy):
             shares=round(cycle.entry_shares, 1),
             order_id=order_id[:16],
         )
+
+        # Publish exit order event
+        self._publish_event(EventType.TRADE_EXECUTED, {
+            "strategy": Strategy.LP_FLIP,
+            "market": cycle.market_question[:40],
+            "side": "BUY",
+            "price": price,
+            "size": cycle.entry_shares,
+            "is_resting": True,
+            "success": True,
+        })
         return True
 
     # ------------------------------------------------------------------

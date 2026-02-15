@@ -105,7 +105,10 @@ class Engine:
         self._state.is_dry_run = self._config.dry_run
         self._state.lp_enabled = self._config.enable_liquidity
         self._state.lp_flip_enabled = self._config.enable_lp_flip
-        # initial_balance stays as config value — P&L tracks change since bot start
+        # Compute portfolio P&L and seed balance history
+        portfolio = self._state.balance + self._state.positions_value
+        self._state.total_pnl = portfolio - self._state.initial_balance
+        self._state.balance_history = [portfolio]
 
         # Shutdown handler
         self._shutdown.register()

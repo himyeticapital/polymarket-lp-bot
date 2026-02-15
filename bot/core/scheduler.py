@@ -55,6 +55,15 @@ class Scheduler:
                 avg_daily_loss = abs(self._state.worst_trade) if self._state.worst_trade < 0 else 0
                 self._state.runway_pct = runway_pct(self._state.balance, avg_daily_loss)
 
+                # Update portfolio P&L from real balance
+                portfolio = self._state.balance + self._state.positions_value
+                self._state.total_pnl = portfolio - self._state.initial_balance
+
+                # Append balance history snapshot for chart
+                self._state.balance_history.append(portfolio)
+                if len(self._state.balance_history) > 300:
+                    self._state.balance_history = self._state.balance_history[-300:]
+
             except Exception as e:
                 logger.error("Stats refresh failed", error=str(e))
 
