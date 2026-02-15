@@ -30,7 +30,9 @@ build/
 .DS_Store
 Thumbs.db
 *.log
+nohup.out
 .vscode/settings.json
+.config/
 
 # Coverage
 htmlcov/
