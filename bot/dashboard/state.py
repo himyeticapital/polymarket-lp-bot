@@ -95,6 +95,9 @@ class DashboardState:
     is_halted: bool = False
     is_dry_run: bool = False
 
+    # LP controls (toggled via dashboard)
+    lp_auto_close: bool = False  # If True, sell filled positions immediately
+
     def add_log(self, message: str) -> None:
         """Add a message to the activity log (capped at 200)."""
         self.activity_log.insert(0, message)

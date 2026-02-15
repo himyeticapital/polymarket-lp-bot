@@ -214,7 +214,7 @@ class AsyncClobClient:
             # Enrich top candidates with market metadata (question, tokens)
             # Use 5x max_markets since many high-reward markets have extreme
             # midpoints (< 0.10) that won't qualify for single-sided LP
-            max_enrich = self._config.lp_max_markets * 5
+            max_enrich = max(self._config.lp_max_markets * 5, 15)
             results: list[dict] = []
             for daily, item in reward_items[:max_enrich]:
                 cid = item["condition_id"]

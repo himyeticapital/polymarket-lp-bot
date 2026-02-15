@@ -44,6 +44,7 @@ class WebDashboard:
         self._app.router.add_get("/", self._handle_index)
         self._app.router.add_get("/ws", self._handle_ws)
         self._app.router.add_get("/api/state", self._handle_api_state)
+        self._app.router.add_post("/api/lp/auto-close", self._handle_toggle_auto_close)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -84,6 +85,11 @@ class WebDashboard:
 
     async def _handle_api_state(self, request: web.Request) -> web.Response:
         return web.json_response(self._serialize_state())
+
+    async def _handle_toggle_auto_close(self, request: web.Request) -> web.Response:
+        self._state.lp_auto_close = not self._state.lp_auto_close
+        logger.info("lp.auto_close_toggled", enabled=self._state.lp_auto_close)
+        return web.json_response({"lp_auto_close": self._state.lp_auto_close})
 
     async def _handle_ws(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse()
@@ -160,6 +166,7 @@ class WebDashboard:
             "runway_pct": round(s.runway_pct, 1),
             "is_halted": s.is_halted,
             "is_dry_run": s.is_dry_run,
+            "lp_auto_close": s.lp_auto_close,
             "strategies": {
                 key: {
                     "name": ss.name,

@@ -1,0 +1,15 @@
+.venv/
+.env
+.env.*
+!.env.example
+bot_data.db
+*.log
+nohup.out
+.git/
+.config/
+.githooks/
+PROJECT_NOTES.md
+__pycache__/
+*.pyc
+polymarket_bot.egg-info/
+.DS_Store

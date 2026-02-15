@@ -916,6 +916,32 @@ body {
   background: var(--yellow-dim);
 }
 
+.lp-auto-close-btn {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  padding: 8px 20px;
+  border-radius: 6px;
+  border: 2px solid var(--border);
+  cursor: pointer;
+  margin-left: auto;
+  transition: all 0.2s;
+  text-transform: uppercase;
+}
+
+.lp-auto-close-btn.off {
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.1);
+  border-color: #ff6b6b;
+}
+
+.lp-auto-close-btn.on {
+  color: var(--green);
+  background: var(--green-dim);
+  border-color: var(--green);
+}
+
 .lp-summary-bar {
   display: flex;
   gap: 20px;
@@ -1234,6 +1260,7 @@ body {
     <div class="card-header">
       LP Markets
       <span class="count" id="lpMarketsCount">0 markets</span>
+      <button id="lpAutoCloseBtn" class="lp-auto-close-btn off" onclick="toggleAutoClose()">Auto-Close: OFF</button>
     </div>
     <div style="padding: 0 18px 0; overflow-x: auto;">
       <table class="lp-markets-table">
@@ -1243,9 +1270,9 @@ body {
             <th>Side</th>
             <th>Price</th>
             <th>Shares</th>
-            <th>Min</th>
-            <th>Pool</th>
-            <th>Spread</th>
+            <th>Cost</th>
+            <th>P&L</th>
+            <th>Max Loss</th>
             <th>Status</th>
           </tr>
         </thead>
@@ -1255,9 +1282,11 @@ body {
       </table>
     </div>
     <div class="lp-summary-bar" id="lpSummaryBar">
-      <span>Eligible Pools: <span class="lp-sum-value positive" id="lpTotalPool">$0</span>/day</span>
-      <span>Capital Deployed: <span class="lp-sum-value" id="lpTotalCapital">$0</span></span>
-      <span>Markets: <span class="lp-sum-value" id="lpEligibleCount">0/0</span> eligible</span>
+      <span>Pools: <span class="lp-sum-value positive" id="lpTotalPool">$0</span>/day</span>
+      <span>Resting: <span class="lp-sum-value" id="lpTotalCapital">$0</span></span>
+      <span>Filled P&L: <span class="lp-sum-value" id="lpFilledPnl">$0</span></span>
+      <span>Max Loss: <span class="lp-sum-value" id="lpMaxLoss">$0</span></span>
+      <span><span class="lp-sum-value" id="lpEligibleCount">0/0</span> eligible</span>
     </div>
   </div>
 
@@ -1372,8 +1401,11 @@ body {
     themeToggle:     $('themeToggle'),
     lpMarketsCount:  $('lpMarketsCount'),
     lpMarketsBody:   $('lpMarketsBody'),
+    lpAutoCloseBtn:  $('lpAutoCloseBtn'),
     lpTotalPool:     $('lpTotalPool'),
     lpTotalCapital:  $('lpTotalCapital'),
+    lpFilledPnl:     $('lpFilledPnl'),
+    lpMaxLoss:       $('lpMaxLoss'),
     lpEligibleCount: $('lpEligibleCount'),
   };
 
@@ -1923,7 +1955,29 @@ body {
     }
   }
 
+  /* Auto-close toggle */
+  function toggleAutoClose() {
+    fetch('/api/lp/auto-close', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) { syncAutoCloseBtn(d.lp_auto_close); });
+  }
+
+  function syncAutoCloseBtn(enabled) {
+    var btn = el.lpAutoCloseBtn;
+    if (enabled) {
+      btn.textContent = 'Auto-Close: ON';
+      btn.className = 'lp-auto-close-btn on';
+    } else {
+      btn.textContent = 'Auto-Close: OFF';
+      btn.className = 'lp-auto-close-btn off';
+    }
+  }
+  /* Expose to onclick */
+  window.toggleAutoClose = toggleAutoClose;
+
   function updateLpMarkets(s) {
+    /* Sync auto-close button from server state */
+    syncAutoCloseBtn(s.lp_auto_close || false);
     var markets = s.lp_markets || [];
     el.lpMarketsCount.textContent = markets.length + ' market' + (markets.length !== 1 ? 's' : '');
 
@@ -1931,14 +1985,19 @@ body {
       el.lpMarketsBody.innerHTML = '<tr><td colspan="8" style="color:var(--text-dim); font-style:italic; text-align:center; padding:20px;">No LP orders active</td></tr>';
       el.lpTotalPool.textContent = '$0';
       el.lpTotalCapital.textContent = '$0';
+      el.lpFilledPnl.textContent = '$0';
+      el.lpMaxLoss.textContent = '$0';
       el.lpEligibleCount.textContent = '0/0';
       return;
     }
 
     var html = '';
     var totalPool = 0;
-    var totalCapital = 0;
+    var totalRestingCapital = 0;
+    var totalFilledPnl = 0;
+    var totalMaxLoss = 0;
     var eligibleCount = 0;
+    var filledCount = 0;
 
     for (var i = 0; i < markets.length; i++) {
       var m = markets[i];
@@ -1946,46 +2005,84 @@ body {
       var minShares = m.min_shares || 0;
       var pool = m.pool || 0;
       var price = m.price || 0;
-      var spread = m.spread || 0;
-      var maxSpread = m.max_spread || 0;
-      var eligible = m.eligible;
       var filled = m.filled;
       var capital = price * shares;
-      totalCapital += capital;
 
-      var statusClass, statusText;
       if (filled) {
-        statusClass = 'filled';
-        statusText = 'FILLED';
-      } else if (eligible) {
-        statusClass = 'eligible';
-        statusText = 'EARNING';
-        totalPool += pool;
-        eligibleCount++;
+        // --- Filled position row with risk metrics ---
+        filledCount++;
+        var currentPrice = m.current_price || price;
+        var cost = m.cost || capital;
+        var pnl = m.unrealized_pnl || 0;
+        var maxLoss = m.max_loss || 0;
+        var stopPrice = m.stop_loss_price || 0;
+        var stopPct = (m.stop_loss_pct || 0) * 100;
+
+        totalFilledPnl += pnl;
+        totalMaxLoss += maxLoss;
+
+        var pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+        var pnlSign = pnl >= 0 ? '+' : '';
+        var priceLabel = '$' + price.toFixed(3) + ' → $' + currentPrice.toFixed(3);
+
+        html += '<tr style="background:rgba(255,193,7,0.06);">' +
+          '<td class="market-name-cell">' + escapeHtml(m.market || '') + '</td>' +
+          '<td>' + (m.side || '--').toUpperCase() + '</td>' +
+          '<td class="num" style="font-size:11px;">' + priceLabel + '</td>' +
+          '<td class="num">' + shares.toFixed(0) + '</td>' +
+          '<td class="num">$' + cost.toFixed(0) + '</td>' +
+          '<td class="num" style="color:' + pnlColor + ';font-weight:600;">' + pnlSign + '$' + pnl.toFixed(2) + '</td>' +
+          '<td class="num" style="color:var(--red);">-$' + maxLoss.toFixed(0) + ' <span style="opacity:0.5;font-size:10px;">@ $' + stopPrice.toFixed(3) + '</span></td>' +
+          '<td><span class="lp-status-badge filled">FILLED</span></td>' +
+          '</tr>';
       } else {
-        statusClass = 'ineligible';
-        statusText = 'INELIGIBLE';
+        // --- Resting order row ---
+        var spread = m.spread || 0;
+        var maxSpread = m.max_spread || 0;
+        var eligible = m.eligible;
+        totalRestingCapital += capital;
+
+        var statusClass, statusText;
+        if (eligible) {
+          statusClass = 'eligible';
+          statusText = 'EARNING';
+          totalPool += pool;
+          eligibleCount++;
+        } else {
+          statusClass = 'ineligible';
+          statusText = 'INELIGIBLE';
+        }
+
+        var sharesColor = shares >= minShares ? 'var(--green)' : 'var(--red)';
+        var spreadStr = (spread * 100).toFixed(1) + '/' + (maxSpread * 100).toFixed(1) + '%';
+        var spreadColor = spread <= maxSpread ? 'var(--green)' : 'var(--red)';
+
+        html += '<tr>' +
+          '<td class="market-name-cell">' + escapeHtml(m.market || '') + '</td>' +
+          '<td>' + (m.side || '--').toUpperCase() + '</td>' +
+          '<td class="num">$' + price.toFixed(2) + '</td>' +
+          '<td class="num" style="color:' + sharesColor + '">' + shares.toFixed(0) + '/' + minShares.toFixed(0) + '</td>' +
+          '<td class="num">$' + capital.toFixed(0) + '</td>' +
+          '<td class="num" style="color:' + spreadColor + '">' + spreadStr + '</td>' +
+          '<td class="num">$' + pool.toFixed(0) + '/d</td>' +
+          '<td><span class="lp-status-badge ' + statusClass + '">' + statusText + '</span></td>' +
+          '</tr>';
       }
-
-      var sharesColor = shares >= minShares ? 'var(--green)' : 'var(--red)';
-      var spreadColor = spread <= maxSpread ? 'var(--green)' : 'var(--red)';
-
-      html += '<tr>' +
-        '<td class="market-name-cell">' + escapeHtml(m.market || '') + '</td>' +
-        '<td>' + (m.side || '--').toUpperCase() + '</td>' +
-        '<td class="num">$' + price.toFixed(2) + '</td>' +
-        '<td class="num" style="color:' + sharesColor + '">' + shares.toFixed(0) + '/' + minShares.toFixed(0) + '</td>' +
-        '<td class="num">$' + pool.toFixed(0) + '</td>' +
-        '<td class="num" style="color:' + spreadColor + '">' + (spread * 100).toFixed(1) + '/' + (maxSpread * 100).toFixed(1) + '%</td>' +
-        '<td class="num">$' + capital.toFixed(0) + '</td>' +
-        '<td><span class="lp-status-badge ' + statusClass + '">' + statusText + '</span></td>' +
-        '</tr>';
     }
 
     el.lpMarketsBody.innerHTML = html;
     el.lpTotalPool.textContent = '$' + totalPool.toFixed(0);
-    el.lpTotalCapital.textContent = '$' + totalCapital.toFixed(0);
-    el.lpEligibleCount.textContent = eligibleCount + '/' + markets.length;
+    el.lpTotalCapital.textContent = '$' + totalRestingCapital.toFixed(0);
+
+    var pnlEl = el.lpFilledPnl;
+    var pnlSign = totalFilledPnl >= 0 ? '+' : '';
+    pnlEl.textContent = pnlSign + '$' + totalFilledPnl.toFixed(2);
+    pnlEl.style.color = totalFilledPnl >= 0 ? 'var(--green)' : 'var(--red)';
+
+    el.lpMaxLoss.textContent = '-$' + totalMaxLoss.toFixed(0);
+    el.lpMaxLoss.style.color = 'var(--red)';
+
+    el.lpEligibleCount.textContent = eligibleCount + '/' + (markets.length - filledCount);
   }
 
   function handleState(state) {

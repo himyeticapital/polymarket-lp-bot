@@ -101,6 +101,7 @@ class BotConfig(BaseSettings):
     lp_max_spread: float = 0.15             # Max 15% spread (skip wider markets)
     lp_min_best_bid: float = 0.02           # Best bid must be >= $0.02
     lp_min_daily_reward: float = 10.0   # Skip markets with < $10/day reward
+    lp_min_estimated_reward: float = 1.0  # Skip markets where our est. daily reward < $1
     lp_max_days_to_resolve: int = 180  # Skip markets > 6 months out
 
     # === Copy Trading ===

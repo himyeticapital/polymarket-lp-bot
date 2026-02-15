@@ -65,7 +65,7 @@ class LiquidityStrategy(BaseStrategy):
         # Filled positions awaiting exit check: condition_id -> {token_id, side, fill_price, shares}
         self._filled_positions: dict[str, dict] = {}
         # Stop-loss threshold: exit if position drops more than 50% from fill price
-        self._exit_loss_pct = 0.50
+        self._exit_loss_pct = 0.25
         # Flag to seed legacy positions on first scan
         self._seeded_legacy = False
         # Fill cooldown: condition_id -> timestamp of last fill (skip for 30 min)
@@ -73,6 +73,10 @@ class LiquidityStrategy(BaseStrategy):
         self._fill_cooldown_sec = 1800  # 30 minutes
         # Market metadata for dashboard: condition_id -> {question, min_shares, daily_reward, max_spread}
         self._market_metadata: dict[str, dict] = {}
+        # Cached current prices for filled positions (updated by monitor loop)
+        self._filled_prices: dict[str, float] = {}  # condition_id -> current price
+        # Mid-price history for volatility detection: condition_id -> [(timestamp, mid)]
+        self._mid_history: dict[str, list[tuple[float, float]]] = {}
 
     # ------------------------------------------------------------------
     # Run loop override
@@ -82,6 +86,9 @@ class LiquidityStrategy(BaseStrategy):
         """Override to track order IDs for fill detection."""
         self._running = True
         logger.info("strategy.start", strategy="LiquidityStrategy")
+
+        # Launch fast position monitor (30s) alongside main scan loop
+        monitor_task = _asyncio.ensure_future(self._position_monitor_loop())
 
         while self._running:
             try:
@@ -112,7 +119,24 @@ class LiquidityStrategy(BaseStrategy):
                 )
             await _asyncio.sleep(self.scan_interval_sec)
 
+        monitor_task.cancel()
+        try:
+            await monitor_task
+        except _asyncio.CancelledError:
+            pass
         logger.info("strategy.stopped", strategy="LiquidityStrategy")
+
+    async def _position_monitor_loop(self) -> None:
+        """Fast loop (30s): detect fills and enforce stop-loss between scan cycles."""
+        while self._running:
+            try:
+                await _asyncio.sleep(30)
+                await self._check_fills_and_update()
+                await self._check_and_exit_positions()
+            except _asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("lp.monitor_error")
 
     # ------------------------------------------------------------------
     # Scan — smart refresh using CLOB rewards API
@@ -183,6 +207,7 @@ class LiquidityStrategy(BaseStrategy):
                 except Exception:
                     pass
                 del self._live_orders[cid]
+                self._mid_history.pop(cid, None)
 
         # Store signal info for order tracking (mids already populated by _try_quote_side)
         self._pending_signal_info.clear()
@@ -218,9 +243,10 @@ class LiquidityStrategy(BaseStrategy):
             },
         )
 
-        # Push LP market data to dashboard
+        # Push LP market data to dashboard (resting + filled positions)
         if self._dashboard_state is not None:
             lp_market_data = []
+            # Resting orders
             for cid, info in self._live_orders.items():
                 meta = self._market_metadata.get(cid, {})
                 question = meta.get("question", "")
@@ -238,7 +264,39 @@ class LiquidityStrategy(BaseStrategy):
                         info.get("shares", 0) >= meta.get("min_shares", 0)
                         and abs(info.get("mid", 0) - info.get("price", 0)) <= meta.get("max_spread", 0)
                     ) if meta else False,
-                    "filled": cid in self._filled_positions,
+                    "filled": False,
+                })
+            # Filled positions (stop-loss monitored) with risk metrics
+            for cid, pos in self._filled_positions.items():
+                meta = self._market_metadata.get(cid, {})
+                question = meta.get("question", "")
+                fill_price = pos.get("fill_price", 0)
+                shares = pos.get("shares", 0)
+                current_price = self._filled_prices.get(cid, fill_price)
+                cost = fill_price * shares
+                current_value = current_price * shares
+                unrealized_pnl = current_value - cost
+                stop_loss_price = fill_price * (1 - self._exit_loss_pct)
+                max_loss = cost * self._exit_loss_pct  # Max loss if stop-loss fires
+                lp_market_data.append({
+                    "market": question or cid[:16],
+                    "condition_id": cid,
+                    "side": pos.get("side", ""),
+                    "price": fill_price,
+                    "shares": shares,
+                    "min_shares": meta.get("min_shares", 0),
+                    "pool": meta.get("daily_reward", 0),
+                    "spread": 0,
+                    "max_spread": meta.get("max_spread", 0),
+                    "eligible": False,
+                    "filled": True,
+                    # Risk metrics for filled positions
+                    "current_price": round(current_price, 4),
+                    "cost": round(cost, 2),
+                    "unrealized_pnl": round(unrealized_pnl, 2),
+                    "max_loss": round(max_loss, 2),
+                    "stop_loss_price": round(stop_loss_price, 4),
+                    "stop_loss_pct": self._exit_loss_pct,
                 })
             self._dashboard_state.lp_markets = lp_market_data
 
@@ -341,13 +399,28 @@ class LiquidityStrategy(BaseStrategy):
                 self._market_sides[cid] = new_side
                 filled_cids.append(cid)
 
-                # Track the filled position for stop-loss monitoring
-                self._filled_positions[cid] = {
-                    "token_id": info["token_id"],
-                    "side": old_side,
-                    "fill_price": info["price"],
-                    "shares": info.get("shares", 0),
-                }
+                # Auto-close mode: sell immediately instead of holding
+                auto_close = self._dashboard_state and self._dashboard_state.lp_auto_close
+                if auto_close:
+                    sold = await self._sell_position(
+                        info["token_id"], info.get("shares", 0), info["price"]
+                    )
+                    logger.info(
+                        "lp.auto_close",
+                        market=cid[:12],
+                        side=old_side,
+                        price=info["price"],
+                        shares=info.get("shares", 0),
+                        sold=sold,
+                    )
+                else:
+                    # Track the filled position for stop-loss monitoring
+                    self._filled_positions[cid] = {
+                        "token_id": info["token_id"],
+                        "side": old_side,
+                        "fill_price": info["price"],
+                        "shares": info.get("shares", 0),
+                    }
                 # Cooldown: don't re-quote this market for 30 min
                 self._fill_cooldowns[cid] = _time.monotonic()
                 logger.info(
@@ -388,6 +461,9 @@ class LiquidityStrategy(BaseStrategy):
 
             if current_price <= 0:
                 continue
+
+            # Cache current price for dashboard display
+            self._filled_prices[cid] = current_price
 
             loss_pct = (fill_price - current_price) / fill_price
 
@@ -587,6 +663,23 @@ class LiquidityStrategy(BaseStrategy):
             return None
 
         mid = book.midpoint
+        # Track mid-price history for volatility / manipulation detection
+        _now = _time.monotonic()
+        _hist = self._mid_history.setdefault(market.condition_id, [])
+        _hist.append((_now, mid if mid is not None else 0.0))
+        if len(_hist) > 10:
+            self._mid_history[market.condition_id] = _hist[-10:]
+            _hist = self._mid_history[market.condition_id]
+        if mid is not None and len(_hist) >= 3:
+            _recent = [h[1] for h in _hist]
+            _mid_range = max(_recent) - min(_recent)
+            if _mid_range > 0.05:
+                logger.warning(
+                    "lp.volatile_mid",
+                    market=market.question[:40],
+                    mid_range=round(_mid_range, 3),
+                    recent_mids=[round(m, 3) for m in _recent[-5:]],
+                )
         if mid is None or mid < 0.10 or mid > 0.90:
             # Polymarket requires two-sided orders when mid < 0.10 or > 0.90.
             # Single-sided earns ZERO rewards in that range.
@@ -602,20 +695,37 @@ class LiquidityStrategy(BaseStrategy):
         if book.best_bid is None or book.best_bid < self.config.lp_min_best_bid:
             return None
 
-        # Check if we already have a live order for this market on this side
+        # Anti-manipulation smart refresh: only replace if order is outside
+        # max_incentive_spread from current mid. Resists manipulation where
+        # bots push mid slightly to trigger unnecessary cancel+replaces.
         existing = self._live_orders.get(market.condition_id)
         if existing and existing["side"] == side:
-            # Order exists on same side — check if price still good
-            old_mid = existing.get("mid", 0)
-            if abs(mid - old_mid) < 0.02:
-                # Price stable — keep existing order, don't replace
-                logger.debug("lp.keeping_order", market=market.question[:30], mid=round(mid, 3), old_mid=round(old_mid, 3))
+            existing_price = existing.get("price", 0)
+            existing_spread = abs(mid - existing_price)
+
+            if existing_spread <= market.max_incentive_spread:
+                # Still within reward range — keep order
+                logger.debug(
+                    "lp.keeping_order",
+                    market=market.question[:30],
+                    mid=round(mid, 3),
+                    order_price=round(existing_price, 3),
+                    spread=round(existing_spread, 4),
+                    max_spread=round(market.max_incentive_spread, 4),
+                )
                 return None
 
-            # Price moved — cancel old order, will place new
+            # Outside max_incentive_spread — must replace to stay eligible
             try:
                 await self.order_manager.cancel_order(existing["order_id"])
-                logger.info("lp.replacing_order", market=market.question[:30], old_mid=round(old_mid, 3), new_mid=round(mid, 3))
+                logger.info(
+                    "lp.replacing_order",
+                    market=market.question[:30],
+                    order_price=round(existing_price, 3),
+                    new_mid=round(mid, 3),
+                    spread=round(existing_spread, 4),
+                    max_spread=round(market.max_incentive_spread, 4),
+                )
             except Exception:
                 pass
             del self._live_orders[market.condition_id]
@@ -663,6 +773,31 @@ class LiquidityStrategy(BaseStrategy):
 
         shares_ok = size_shares >= market.min_incentive_size
         spread_ok = spread_from_mid <= market.max_incentive_spread
+
+        # Pool share estimation: skip if our estimated daily reward < threshold.
+        # Uses Q-score formula to weight book orders by proximity to mid.
+        from bot.utils.math import reward_score as _reward_score
+        total_q = sum(
+            _reward_score(market.max_incentive_spread, abs(mid - lvl.price), lvl.size)
+            for lvl in book.bids
+            if abs(mid - lvl.price) <= market.max_incentive_spread
+        )
+        our_q = _reward_score(market.max_incentive_spread, spread_from_mid, size_shares)
+        pool_share = our_q / (total_q + our_q) if (total_q + our_q) > 0 else 0.0
+        est_daily = market.daily_reward_usd * pool_share
+
+        if est_daily < self.config.lp_min_estimated_reward:
+            logger.info(
+                "lp.skip_low_reward_share",
+                market=market.question[:40],
+                side=side,
+                est_daily=round(est_daily, 3),
+                pool_share_pct=round(pool_share * 100, 2),
+                our_q=round(our_q, 1),
+                total_q=round(total_q, 1),
+                pool=round(market.daily_reward_usd, 1),
+            )
+            return None
 
         # Store midpoint for accurate smart refresh tracking
         self._pending_mids[market.condition_id] = mid
