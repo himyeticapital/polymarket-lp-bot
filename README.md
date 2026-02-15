@@ -8,12 +8,15 @@ Built with pure Python, async throughout, using the official `py-clob-client` SD
 
 ## Features
 
-- **4 Trading Strategies** -- Liquidity provision (primary), arbitrage, copy trading, and synth edge
+- **5 Trading Strategies** -- Two LP strategies (multi-market + Didi Flip), arbitrage, copy trading, and synth edge
+- **Strategy 1: Multi-Market LP** -- Spreads capital across 6 reward pools simultaneously, auto-close on fill limits loss to spread cost
+- **Strategy 2: Didi Flip LP** -- Single-market state machine: place entry, flip to opposite side on fill, earn LP rewards on both legs
 - **LP Reward Hunting** -- Ranks markets by daily reward pool size, targets the highest-paying opportunities
 - **One-Sided LP** -- Places limit orders on one side per market, switches sides on fill (based on @DidiTrading approach)
-- **Smart Refresh** -- Keeps stable orders alive, only replaces when midpoint drifts more than $0.02
+- **Smart Refresh** -- Keeps stable orders alive, only replaces when midpoint drifts beyond max incentive spread
 - **Fill Detection & Side Switching** -- Detects filled orders via open order polling, automatically switches to the opposite side
-- **Stop-Loss Exits** -- Auto-sells positions that drop 50% from fill price
+- **Auto-Close Mode** -- Immediately sells filled positions to eliminate directional risk (loss = spread cost only)
+- **Stop-Loss Exits** -- Configurable stop-loss (default 25%) for positions held without auto-close
 - **Fill Cooldown** -- 30-minute cooldown after fills to prevent fill cycling
 - **Risk Management** -- $250 drawdown kill switch, per-trade/market/portfolio exposure limits
 - **Anti-Detection** -- Randomized timing (+/-15%) and size (+/-10%) jitter on all orders
@@ -37,8 +40,8 @@ Built with pure Python, async throughout, using the official `py-clob-client` SD
               |                   |                   |
      +--------v-------+  +-------v--------+  +-------v--------+
      |   Strategies    |  |   Scheduler    |  |   Dashboard    |
-     | LP / Arb / Copy |  | Stats, Health  |  | Web + Events   |
-     | / Synth Edge    |  | Profile Sync   |  | (port 8080)    |
+     | LP / LP Flip /  |  | Stats, Health  |  | Web + Events   |
+     | Arb/Copy/Synth  |  | Profile Sync   |  | (port 8080)    |
      +--------+--------+  +----------------+  +----------------+
               |
               | Signal
@@ -89,7 +92,8 @@ bot/
 │   └── websocket_market.py    # WebSocket client for market data
 ├── strategies/
 │   ├── base.py                # Base strategy class
-│   ├── liquidity.py           # LP reward hunting (primary strategy)
+│   ├── liquidity.py           # Strategy 1: Multi-market LP with auto-close
+│   ├── liquidity_flip.py      # Strategy 2: Didi Flip — single-market flip state machine
 │   ├── arbitrage.py           # YES+NO mispricing arbitrage
 │   ├── copy_trading.py        # Mirror wallet copy trading
 │   └── synth_edge.py          # Synth probability edge trading
@@ -207,6 +211,7 @@ All configuration is via environment variables with the `PM_` prefix, loaded fro
 | `PM_ENABLE_LIQUIDITY` | `true` | Enable LP reward strategy |
 | `PM_ENABLE_COPY_TRADING` | `true` | Enable copy trading strategy |
 | `PM_ENABLE_SYNTH_EDGE` | `true` | Enable synth edge strategy |
+| `PM_ENABLE_LP_FLIP` | `false` | Enable Didi Flip LP strategy (Strategy 2) |
 | `PM_ENABLE_DASHBOARD` | `true` | Enable TUI dashboard |
 | `PM_ENABLE_WEB_DASHBOARD` | `true` | Enable browser dashboard |
 | `PM_WEB_DASHBOARD_PORT` | `8080` | Web dashboard port |
@@ -238,6 +243,17 @@ All configuration is via environment variables with the `PM_` prefix, loaded fro
 | `PM_LP_MIN_BEST_BID` | `0.02` | Minimum best bid price |
 | `PM_LP_MIN_DAILY_REWARD` | `10.0` | Minimum daily reward pool (USD) |
 | `PM_LP_MAX_DAYS_TO_RESOLVE` | `180` | Skip markets more than N days out |
+
+### LP Flip Strategy (Didi Flip)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PM_ENABLE_LP_FLIP` | `false` | Enable Strategy 2 (run alongside or instead of Strategy 1) |
+| `PM_LP_FLIP_ORDER_SIZE_USD` | `25.0` | Order size for flip entries |
+| `PM_LP_FLIP_POLL_INTERVAL_SEC` | `30.0` | Fill polling interval |
+| `PM_LP_FLIP_SCAN_INTERVAL_SEC` | `60.0` | Market scan interval |
+| `PM_LP_FLIP_STOP_LOSS_PCT` | `0.25` | Stop-loss threshold (25% default) |
+| `PM_LP_FLIP_MAX_RESTING_SEC` | `3600` | Cancel stale entry after 1 hour |
 
 ### Arbitrage Strategy
 
@@ -330,24 +346,64 @@ pytest             # Run tests
 
 ---
 
-## Strategies
+## LP Strategies
 
-### Liquidity Provision (Primary)
+The bot includes two LP strategies that can run independently or together. Both earn rewards by providing liquidity on Polymarket's CLOB order books.
 
-The LP strategy earns rewards by providing liquidity on Polymarket's order books. It follows the @DidiTrading approach with added risk protections.
+### Strategy 1: Multi-Market LP (with Auto-Close)
+
+Spreads capital across multiple reward pools simultaneously for maximum reward coverage. When an order fills, **auto-close immediately sells the position** to eliminate directional risk -- loss is limited to the bid-ask spread cost (~$2-4 per $65 order).
 
 **How it works:**
 
 1. **Reward-first ranking** -- Fetches all reward-eligible markets from the CLOB `/rewards/markets/current` endpoint and sorts by daily reward pool size (highest first)
-2. **One side only** -- Places a single BUY limit order on one side (YES or NO) per market
-3. **Behind best bid** -- Prices at the 2nd-best bid level (never closest to midpoint) to minimize fill risk
-4. **Smart refresh** -- Keeps existing orders if midpoint has moved less than $0.02; only cancels and replaces when the price has drifted
-5. **Min share enforcement** -- Scales up order size to meet the market's `rewards_min_size` requirement
-6. **Fill detection** -- Polls open orders each cycle; if an order is gone, it was filled -- switch to the opposite side
-7. **Fill cooldown** -- 30-minute cooldown after a fill before re-quoting the same market
-8. **Stop-loss exit** -- Monitors filled positions; auto-sells if current price drops 50% below fill price
-9. **Expiry filter** -- Skips markets resolving within 3 days (high adverse selection risk)
-10. **Midpoint filter** -- Skips tokens with mid < 0.10 or > 0.90 (Polymarket requires two-sided orders in that range; single-sided earns zero rewards)
+2. **Multi-market deployment** -- Places orders on up to 6 markets simultaneously (configurable via `PM_LP_MAX_MARKETS`)
+3. **One side only** -- Places a single BUY limit order on one side (YES or NO) per market
+4. **Behind best bid** -- Prices at the 2nd-best bid level (never closest to midpoint) to minimize fill risk
+5. **Smart refresh** -- Keeps existing orders if still within `max_incentive_spread` of midpoint; only replaces when drifted outside reward eligibility
+6. **Min share enforcement** -- Scales up order size to meet the market's `rewards_min_size` requirement
+7. **Q-score pool share estimation** -- Skips markets where estimated daily reward < threshold (too much competition)
+8. **Auto-close on fill** -- When an order fills, immediately sells the position (spread cost loss only, no directional risk)
+9. **Fill cooldown** -- 30-minute cooldown after a fill before re-quoting the same market
+10. **Stop-loss fallback** -- If auto-close is disabled, monitors positions with configurable stop-loss (default 25%)
+11. **Expiry filter** -- Skips markets resolving within 3 days (high adverse selection risk)
+12. **Midpoint filter** -- Skips tokens with mid < 0.10 or > 0.90 (single-sided orders earn zero rewards in that range)
+
+**Risk profile:** With auto-close ON, worst case is ~$12-24 loss if all 6 orders fill simultaneously (spread cost only). Without auto-close, positions carry directional risk.
+
+### Strategy 2: Didi Flip LP
+
+Single-market state machine inspired by @DidiTrading. Places one entry order, waits for fill, then immediately flips to the opposite side. Earns LP rewards on both the entry AND exit orders while they rest.
+
+**State machine:**
+```
+IDLE → pick best reward market, place entry BUY → RESTING_ENTRY
+RESTING_ENTRY → poll for fill → on fill → place exit BUY opposite side → RESTING_EXIT
+RESTING_EXIT → poll for fill → on fill → log profit → IDLE (pick next market)
+                     └→ stop-loss: cancel exit, market sell → IDLE
+```
+
+**How it works:**
+
+1. **IDLE phase** -- Scans reward markets, picks the single best one, places a BUY entry order behind the best bid
+2. **RESTING_ENTRY** -- Polls every 30s for fill. Entry order earns LP rewards while resting
+3. **On entry fill** -- Immediately places a BUY on the **opposite** side (not a SELL). This exit order also earns LP rewards while resting
+4. **RESTING_EXIT** -- Polls for exit fill. On fill, logs profit, goes back to IDLE
+5. **Stop-loss** -- If position drops beyond threshold (default 5%), cancels exit order and market sells
+6. **Stale entry** -- Cancels unfilled entries after 1 hour, picks a new market
+
+**Risk profile:** Lower risk than Strategy 1 without auto-close since the exit order acts as a hedge. But deploys capital to only 1 pool vs 6, so total rewards are lower.
+
+### Strategy Comparison
+
+| | Strategy 1 (Auto-Close) | Strategy 2 (Didi Flip) |
+|---|---|---|
+| **Markets** | 6 simultaneously | 1 at a time |
+| **Capital deployed** | ~$390 across 6 pools | ~$250 on 1 pool |
+| **Rewards/day** | Higher (~$1.50-2.00) | Lower (~$1.00-1.50) |
+| **Directional risk** | None (auto-close) | Low (flip hedge) |
+| **Worst-case loss** | ~$12-24 (spread cost) | Stop-loss % of position |
+| **Best for** | Maximizing LP rewards | Avoiding directional fills |
 
 ### Arbitrage
 
@@ -376,7 +432,8 @@ The risk manager acts as a pre-trade gate. Every signal must pass through it bef
 | **Per-Market Exposure** | Each market capped at `max_per_market_usd`. BUY signals downsized to fit. |
 | **Portfolio Exposure** | Total portfolio exposure capped at `max_portfolio_exposure_usd`. |
 | **Anti-Detection** | Timing jitter (+/-15%) and size jitter (+/-10%) applied to every order. |
-| **Stop-Loss** | Filled LP positions auto-sold if they drop 50% from fill price. |
+| **Auto-Close** | Strategy 1 immediately sells filled LP positions (spread cost only). Toggleable via dashboard. |
+| **Stop-Loss** | Configurable stop-loss for held positions (default 25% for Strategy 1, 5% for Didi Flip). |
 | **Fill Cooldown** | 30-minute cooldown after fills prevents fill cycling. |
 | **Expiry Filter** | Markets resolving within 3 days are excluded from LP. |
 
@@ -399,6 +456,9 @@ The web dashboard runs on `http://localhost:8080` (configurable via `PM_WEB_DASH
 - `GET /` -- Dashboard HTML page
 - `GET /api/state` -- JSON snapshot of current bot state
 - `GET /ws` -- WebSocket endpoint for real-time state updates
+- `POST /api/lp/auto-close` -- Toggle auto-close mode for Strategy 1
+- `POST /api/lp-flip/toggle` -- Toggle Didi Flip strategy on/off
+- `POST /api/strategy/switch` -- Switch between strategies (`{"strategy": "multi_market"}` or `{"strategy": "didi_flip"}`)
 
 ---
 
