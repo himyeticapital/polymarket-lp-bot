@@ -37,7 +37,6 @@ rsync -avz --delete \
     --exclude='venv/' \
     --exclude='__pycache__/' \
     --exclude='.git/' \
-    --exclude='.config/' \
     --exclude='node_modules/' \
     --exclude='.DS_Store' \
     --exclude='nohup.out' \
