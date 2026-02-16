@@ -1394,6 +1394,42 @@ body {
   </div>
 
   <!-- ================================================================
+       TRADE HISTORY (Strategy 1 fill cycles)
+       ================================================================ -->
+  <div class="card" id="tradeHistoryPanel">
+    <div class="card-header">
+      Trade History
+      <span class="count" id="tradeHistoryCount">0 cycles</span>
+    </div>
+    <div style="padding: 0 18px 0; overflow-x: auto; max-height: 400px; overflow-y: auto;">
+      <table class="lp-markets-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Market</th>
+            <th>Side</th>
+            <th>Entry</th>
+            <th>Exit</th>
+            <th>Shares</th>
+            <th>Spread</th>
+            <th>P&amp;L</th>
+            <th>Reason</th>
+          </tr>
+        </thead>
+        <tbody id="tradeHistoryBody">
+          <tr><td colspan="9" style="color:var(--text-dim); font-style:italic; text-align:center; padding:20px;">No completed trades yet</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="lp-summary-bar" id="tradeHistorySummary">
+      <span>Trades: <span class="lp-sum-value" id="thTotalCount">0</span></span>
+      <span>Total P&L: <span class="lp-sum-value" id="thTotalPnl">$0</span></span>
+      <span>Avg Spread: <span class="lp-sum-value" id="thAvgSpread">$0</span></span>
+      <span>Win Rate: <span class="lp-sum-value" id="thWinRate">0%</span></span>
+    </div>
+  </div>
+
+  <!-- ================================================================
        STRATEGY 2: DIDI FLIP
        ================================================================ -->
   <div class="card" id="flipPanel">
@@ -1570,6 +1606,12 @@ body {
     flipTotalCount: $('flipTotalCount'),
     flipTotalProfit: $('flipTotalProfit'),
     flipHistoryBody: $('flipHistoryBody'),
+    tradeHistoryCount: $('tradeHistoryCount'),
+    tradeHistoryBody: $('tradeHistoryBody'),
+    thTotalCount: $('thTotalCount'),
+    thTotalPnl: $('thTotalPnl'),
+    thAvgSpread: $('thAvgSpread'),
+    thWinRate: $('thWinRate'),
   };
 
   /* ==================================================================
@@ -2350,12 +2392,81 @@ body {
     el.lpEligibleCount.textContent = eligibleCount + '/' + (markets.length - filledCount);
   }
 
+  function updateTradeHistory(s) {
+    var trades = s.lp_trade_history || [];
+    el.tradeHistoryCount.textContent = trades.length + ' cycle' + (trades.length !== 1 ? 's' : '');
+
+    if (trades.length === 0) {
+      el.tradeHistoryBody.innerHTML = '<tr><td colspan="9" style="color:var(--text-dim); font-style:italic; text-align:center; padding:20px;">No completed trades yet</td></tr>';
+      el.thTotalCount.textContent = '0';
+      el.thTotalPnl.textContent = '$0';
+      el.thAvgSpread.textContent = '$0';
+      el.thWinRate.textContent = '0%';
+      return;
+    }
+
+    var html = '';
+    var totalPnl = 0;
+    var totalSpread = 0;
+    var wins = 0;
+
+    for (var i = 0; i < trades.length; i++) {
+      var t = trades[i];
+      var pnl = t.pnl || 0;
+      var spread = t.spread_cost || 0;
+      totalPnl += pnl;
+      totalSpread += spread;
+      if (pnl >= 0) wins++;
+
+      var pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+      var pnlSign = pnl >= 0 ? '+' : '';
+      var reasonBadge;
+      var reason = t.exit_reason || '';
+      if (reason === 'auto_close') {
+        reasonBadge = '<span class="lp-status-badge eligible">AUTO-CLOSE</span>';
+      } else if (reason === 'stop_loss') {
+        reasonBadge = '<span class="lp-status-badge filled">STOP-LOSS</span>';
+      } else {
+        reasonBadge = '<span class="lp-status-badge ineligible">' + escapeHtml(reason.toUpperCase()) + '</span>';
+      }
+
+      var timeStr = (t.entry_time || '--') + ' → ' + (t.exit_time || '--');
+
+      html += '<tr>' +
+        '<td style="font-size:0.65rem;white-space:nowrap;">' + timeStr + '</td>' +
+        '<td class="market-name-cell">' + escapeHtml(t.market || '') + '</td>' +
+        '<td>' + (t.side || '--').toUpperCase() + '</td>' +
+        '<td class="num">$' + (t.entry_price || 0).toFixed(3) + '</td>' +
+        '<td class="num">$' + (t.exit_price || 0).toFixed(3) + '</td>' +
+        '<td class="num">' + (t.shares || 0).toFixed(0) + '</td>' +
+        '<td class="num" style="color:var(--red);">-$' + spread.toFixed(2) + '</td>' +
+        '<td class="num" style="color:' + pnlColor + ';font-weight:600;">' + pnlSign + '$' + pnl.toFixed(2) + '</td>' +
+        '<td>' + reasonBadge + '</td>' +
+        '</tr>';
+    }
+
+    el.tradeHistoryBody.innerHTML = html;
+    el.thTotalCount.textContent = String(trades.length);
+
+    var pnlEl = el.thTotalPnl;
+    var pnlSignTotal = totalPnl >= 0 ? '+' : '';
+    pnlEl.textContent = pnlSignTotal + '$' + totalPnl.toFixed(2);
+    pnlEl.style.color = totalPnl >= 0 ? 'var(--green)' : 'var(--red)';
+
+    var avgSpread = trades.length > 0 ? totalSpread / trades.length : 0;
+    el.thAvgSpread.textContent = '$' + avgSpread.toFixed(2);
+
+    var winRate = trades.length > 0 ? (wins / trades.length * 100) : 0;
+    el.thWinRate.textContent = winRate.toFixed(0) + '%';
+  }
+
   function handleState(state) {
     updateStats(state);
     updateChart(state);
     updateStrategies(state);
     updateStrategySelector(state);
     updateLpMarkets(state);
+    updateTradeHistory(state);
     updateFlipPanel(state);
     updateMarkets(state);
     updateActivityLog(state);

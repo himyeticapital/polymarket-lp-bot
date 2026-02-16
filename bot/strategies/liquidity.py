@@ -77,6 +77,9 @@ class LiquidityStrategy(BaseStrategy):
         self._filled_prices: dict[str, float] = {}  # condition_id -> current price
         # Mid-price history for volatility detection: condition_id -> [(timestamp, mid)]
         self._mid_history: dict[str, list[tuple[float, float]]] = {}
+        # Trade cycle tracking for dashboard history
+        self._trade_history: list[dict] = []  # completed cycles (most recent first, max 50)
+        self._pending_cycles: dict[str, dict] = {}  # condition_id -> entry info awaiting exit
 
     # ------------------------------------------------------------------
     # Run loop override
@@ -366,11 +369,21 @@ class LiquidityStrategy(BaseStrategy):
             # Don't overwrite positions already tracked from LP fills
             if cid in self._filled_positions:
                 continue
+            side = (pos.outcome or "yes").lower()
             self._filled_positions[cid] = {
                 "token_id": token_id,
-                "side": (pos.outcome or "yes").lower(),
+                "side": side,
                 "fill_price": pos.avg_entry_price,
                 "shares": pos.size,
+            }
+            # Also create pending cycle so exit is recorded in trade history
+            meta = self._market_metadata.get(cid, {})
+            self._pending_cycles[cid] = {
+                "market": meta.get("question", cid[:16]),
+                "side": side,
+                "entry_price": pos.avg_entry_price,
+                "shares": pos.size,
+                "entry_time": "legacy",
             }
             count += 1
 
@@ -414,33 +427,66 @@ class LiquidityStrategy(BaseStrategy):
                 self._market_sides[cid] = new_side
                 filled_cids.append(cid)
 
+                # Record entry time for trade history
+                entry_time = _time.strftime("%H:%M:%S")
+                fill_shares = info.get("shares", 0)
+                fill_price = info["price"]
+                meta = self._market_metadata.get(cid, {})
+                market_name = meta.get("question", cid[:16])
+
                 # Auto-close mode: sell immediately instead of holding
                 auto_close = self._dashboard_state and self._dashboard_state.lp_auto_close
                 if auto_close:
-                    sold = await self._sell_position(
-                        info["token_id"], info.get("shares", 0), info["price"]
+                    sold, exit_price = await self._sell_position(
+                        info["token_id"], fill_shares, fill_price
                     )
                     logger.info(
                         "lp.auto_close",
                         market=cid[:12],
                         side=old_side,
-                        price=info["price"],
-                        shares=info.get("shares", 0),
+                        price=fill_price,
+                        shares=fill_shares,
                         sold=sold,
                     )
+                    if sold:
+                        # Record completed trade cycle
+                        cost = fill_price * fill_shares
+                        revenue = exit_price * fill_shares if exit_price > 0 else 0.0
+                        spread_cost = abs(fill_price - exit_price) * fill_shares if exit_price > 0 else 0.0
+                        pnl = revenue - cost
+                        self._record_trade_cycle(
+                            market=market_name,
+                            condition_id=cid,
+                            side=old_side,
+                            entry_price=fill_price,
+                            exit_price=exit_price,
+                            shares=fill_shares,
+                            pnl=pnl,
+                            spread_cost=spread_cost,
+                            exit_reason="auto_close",
+                            entry_time=entry_time,
+                        )
                     if not sold:
                         # Auto-close failed — track for stop-loss AND halt new orders
                         logger.error(
                             "lp.auto_close_FAILED_HALTING",
                             market=cid[:12],
-                            shares=info.get("shares", 0),
-                            price=info["price"],
+                            shares=fill_shares,
+                            price=fill_price,
                         )
                         self._filled_positions[cid] = {
                             "token_id": info["token_id"],
                             "side": old_side,
-                            "fill_price": info["price"],
-                            "shares": info.get("shares", 0),
+                            "fill_price": fill_price,
+                            "shares": fill_shares,
+                        }
+                        # Track as pending cycle for later exit
+                        self._pending_cycles[cid] = {
+                            "market": market_name,
+                            "side": old_side,
+                            "entry_price": fill_price,
+                            "shares": fill_shares,
+                            "entry_time": entry_time,
                         }
                         # Cancel all live orders — don't take new risk while stuck
                         try:
@@ -463,8 +509,16 @@ class LiquidityStrategy(BaseStrategy):
                     self._filled_positions[cid] = {
                         "token_id": info["token_id"],
                         "side": old_side,
-                        "fill_price": info["price"],
-                        "shares": info.get("shares", 0),
+                        "fill_price": fill_price,
+                        "shares": fill_shares,
+                    }
+                    # Track as pending cycle for later exit
+                    self._pending_cycles[cid] = {
+                        "market": market_name,
+                        "side": old_side,
+                        "entry_price": fill_price,
+                        "shares": fill_shares,
+                        "entry_time": entry_time,
                     }
                 # Cooldown: don't re-quote this market for 30 min
                 self._fill_cooldowns[cid] = _time.monotonic()
@@ -533,15 +587,85 @@ class LiquidityStrategy(BaseStrategy):
                     current=round(current_price, 3),
                     shares=round(shares, 1),
                 )
-                sold = await self._sell_position(token_id, shares, current_price)
+                sold, exit_price = await self._sell_position(token_id, shares, current_price)
                 if sold:
                     exited.append(cid)
+                    # Complete pending trade cycle
+                    pending = self._pending_cycles.pop(cid, None)
+                    if pending:
+                        cost = pending["entry_price"] * pending["shares"]
+                        revenue = exit_price * pending["shares"] if exit_price > 0 else 0.0
+                        pnl = revenue - cost
+                        self._record_trade_cycle(
+                            market=pending["market"],
+                            condition_id=cid,
+                            side=pending["side"],
+                            entry_price=pending["entry_price"],
+                            exit_price=exit_price,
+                            shares=pending["shares"],
+                            pnl=pnl,
+                            spread_cost=abs(pending["entry_price"] - exit_price) * pending["shares"],
+                            exit_reason="stop_loss",
+                            entry_time=pending.get("entry_time", ""),
+                        )
 
         for cid in exited:
             del self._filled_positions[cid]
 
-    async def _sell_position(self, token_id: str, shares: float, price: float) -> bool:
-        """Approve conditional token and sell, stepping down 1¢ at a time then market sell."""
+    def _record_trade_cycle(
+        self,
+        market: str,
+        condition_id: str,
+        side: str,
+        entry_price: float,
+        exit_price: float,
+        shares: float,
+        pnl: float,
+        spread_cost: float,
+        exit_reason: str,
+        entry_time: str,
+    ) -> None:
+        """Record a completed trade cycle for dashboard history."""
+        exit_time = _time.strftime("%H:%M:%S")
+        cycle = {
+            "market": market,
+            "condition_id": condition_id[:12],
+            "side": side,
+            "entry_price": round(entry_price, 4),
+            "exit_price": round(exit_price, 4),
+            "shares": round(shares, 1),
+            "cost": round(entry_price * shares, 2),
+            "revenue": round(exit_price * shares, 2) if exit_price > 0 else 0.0,
+            "pnl": round(pnl, 2),
+            "spread_cost": round(spread_cost, 2),
+            "exit_reason": exit_reason,
+            "entry_time": entry_time,
+            "exit_time": exit_time,
+        }
+        self._trade_history.insert(0, cycle)
+        if len(self._trade_history) > 50:
+            self._trade_history = self._trade_history[:50]
+
+        # Push to dashboard state
+        if self._dashboard_state is not None:
+            self._dashboard_state.lp_trade_history = self._trade_history
+
+        logger.info(
+            "lp.trade_cycle_complete",
+            market=market[:30],
+            side=side,
+            entry=entry_price,
+            exit=exit_price,
+            shares=round(shares, 1),
+            pnl=round(pnl, 2),
+            reason=exit_reason,
+        )
+
+    async def _sell_position(self, token_id: str, shares: float, price: float) -> tuple[bool, float]:
+        """Approve conditional token and sell, stepping down 1¢ at a time then market sell.
+
+        Returns (success, exit_price) — exit_price is the price at which the sell was placed.
+        """
         from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
 
         try:
@@ -565,7 +689,7 @@ class LiquidityStrategy(BaseStrategy):
 
             if sell_shares < 1:
                 logger.info("lp.exit_skip_tiny", token=token_id[:16], balance=actual_balance)
-                return True  # remove from tracking, position is negligible
+                return True, 0.0  # remove from tracking, position is negligible
 
             # 3. Try limit sells stepping down 1¢ at a time from fill price
             start_price = max(0.01, round_to_tick(price))
@@ -590,7 +714,7 @@ class LiquidityStrategy(BaseStrategy):
                         attempt=attempt,
                         result=result,
                     )
-                    return True
+                    return True, sell_price
                 except Exception as e:
                     last_err = e
                     logger.warning(
@@ -618,7 +742,7 @@ class LiquidityStrategy(BaseStrategy):
                     shares=round(sell_shares, 1),
                     result=result,
                 )
-                return True
+                return True, 0.01  # FOK at 1¢ floor
             except Exception as e:
                 last_err = e
 
@@ -629,11 +753,11 @@ class LiquidityStrategy(BaseStrategy):
                 attempts=attempt + 1,
                 last_error=str(last_err)[:200],
             )
-            return False
+            return False, 0.0
 
         except Exception:
             logger.exception("lp.exit_sell_failed", token=token_id[:16])
-            return False
+            return False, 0.0
 
     # ------------------------------------------------------------------
     # Market ranking

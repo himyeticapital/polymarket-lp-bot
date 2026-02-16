@@ -113,6 +113,9 @@ class DashboardState:
     lp_flip_total_flips: int = 0
     lp_flip_recent_flips: list[dict] = field(default_factory=list)
 
+    # LP trade history (completed fill→exit cycles, most recent first, max 50)
+    lp_trade_history: list[dict] = field(default_factory=list)
+
     def add_log(self, message: str) -> None:
         """Add a message to the activity log (capped at 200)."""
         self.activity_log.insert(0, message)

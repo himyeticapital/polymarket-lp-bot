@@ -204,6 +204,7 @@ class WebDashboard:
             "lp_flip_total_profit": round(s.lp_flip_total_profit, 4),
             "lp_flip_total_flips": s.lp_flip_total_flips,
             "lp_flip_recent_flips": s.lp_flip_recent_flips[:10],
+            "lp_trade_history": s.lp_trade_history[:20],
             "strategies": {
                 key: {
                     "name": ss.name,
