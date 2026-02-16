@@ -151,6 +151,21 @@ class LiquidityStrategy(BaseStrategy):
         # 1. Check which live orders are still open vs filled
         await self._check_fills_and_update()
 
+        # Halt check: if auto-close failed, don't place new orders — only monitor exits
+        if self._dashboard_state and self._dashboard_state.is_halted:
+            await self._check_and_exit_positions()
+            if not self._filled_positions:
+                # All stuck positions cleared — resume trading
+                self._dashboard_state.is_halted = False
+                self._dashboard_state.add_log("Stuck positions cleared — resuming trading")
+                logger.info("lp.halt_cleared_resuming")
+            else:
+                logger.warning(
+                    "lp.halted_waiting_for_exit",
+                    stuck_positions=len(self._filled_positions),
+                )
+            return []
+
         # 1b. Check filled positions for stop-loss exits
         await self._check_and_exit_positions()
 
@@ -413,6 +428,36 @@ class LiquidityStrategy(BaseStrategy):
                         shares=info.get("shares", 0),
                         sold=sold,
                     )
+                    if not sold:
+                        # Auto-close failed — track for stop-loss AND halt new orders
+                        logger.error(
+                            "lp.auto_close_FAILED_HALTING",
+                            market=cid[:12],
+                            shares=info.get("shares", 0),
+                            price=info["price"],
+                        )
+                        self._filled_positions[cid] = {
+                            "token_id": info["token_id"],
+                            "side": old_side,
+                            "fill_price": info["price"],
+                            "shares": info.get("shares", 0),
+                        }
+                        # Cancel all live orders — don't take new risk while stuck
+                        try:
+                            await self.clob_client.cancel_all()  # type: ignore[attr-defined]
+                            self._live_orders.clear()
+                            logger.warning("lp.auto_close_fail_cancelled_all_orders")
+                        except Exception:
+                            logger.exception("lp.cancel_all_after_fail")
+                        # Mark halted on dashboard so operator sees it
+                        if self._dashboard_state:
+                            self._dashboard_state.is_halted = True
+                            self._dashboard_state.add_log(
+                                f"AUTO-CLOSE SELL FAILED for {cid[:12]} "
+                                f"({info.get('shares', 0):.0f} shares @ "
+                                f"{info['price']}). Trading halted — "
+                                f"position tracked for stop-loss retry."
+                            )
                 else:
                     # Track the filled position for stop-loss monitoring
                     self._filled_positions[cid] = {
@@ -496,7 +541,7 @@ class LiquidityStrategy(BaseStrategy):
             del self._filled_positions[cid]
 
     async def _sell_position(self, token_id: str, shares: float, price: float) -> bool:
-        """Approve conditional token and sell via limit order at market price."""
+        """Approve conditional token and sell, stepping down 1¢ at a time then market sell."""
         from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
 
         try:
@@ -522,23 +567,69 @@ class LiquidityStrategy(BaseStrategy):
                 logger.info("lp.exit_skip_tiny", token=token_id[:16], balance=actual_balance)
                 return True  # remove from tracking, position is negligible
 
-            # 3. Sell at a low price for immediate fill (price improvement expected)
-            sell_price = max(0.01, round_to_tick(price * 0.5))
-            result = await self.clob_client.create_and_post_limit_order(  # type: ignore[attr-defined]
-                token_id=token_id,
-                price=sell_price,
-                size=sell_shares,
-                side="SELL",
-                order_type="GTC",
-            )
-            logger.info(
-                "lp.exit_sold",
+            # 3. Try limit sells stepping down 1¢ at a time from fill price
+            start_price = max(0.01, round_to_tick(price))
+            last_err = None
+            attempt = 0
+            sell_price = start_price
+            while sell_price >= 0.01:
+                attempt += 1
+                try:
+                    result = await self.clob_client.create_and_post_limit_order(  # type: ignore[attr-defined]
+                        token_id=token_id,
+                        price=sell_price,
+                        size=sell_shares,
+                        side="SELL",
+                        order_type="GTC",
+                    )
+                    logger.info(
+                        "lp.exit_sold",
+                        token=token_id[:16],
+                        shares=round(sell_shares, 1),
+                        price=sell_price,
+                        attempt=attempt,
+                        result=result,
+                    )
+                    return True
+                except Exception as e:
+                    last_err = e
+                    logger.warning(
+                        "lp.exit_sell_retry",
+                        token=token_id[:16],
+                        price=sell_price,
+                        attempt=attempt,
+                        error=str(e)[:120],
+                    )
+                    await _asyncio.sleep(0.5)
+                sell_price = round_to_tick(sell_price - 0.01)
+
+            # 4. All limit prices failed — try FOK market sell at 1¢
+            try:
+                result = await self.clob_client.create_and_post_limit_order(  # type: ignore[attr-defined]
+                    token_id=token_id,
+                    price=0.01,
+                    size=sell_shares,
+                    side="SELL",
+                    order_type="FOK",
+                )
+                logger.info(
+                    "lp.exit_market_sold",
+                    token=token_id[:16],
+                    shares=round(sell_shares, 1),
+                    result=result,
+                )
+                return True
+            except Exception as e:
+                last_err = e
+
+            logger.error(
+                "lp.exit_sell_all_failed",
                 token=token_id[:16],
                 shares=round(sell_shares, 1),
-                price=sell_price,
-                result=result,
+                attempts=attempt + 1,
+                last_error=str(last_err)[:200],
             )
-            return True
+            return False
 
         except Exception:
             logger.exception("lp.exit_sell_failed", token=token_id[:16])
