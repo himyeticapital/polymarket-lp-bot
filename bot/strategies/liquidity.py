@@ -64,8 +64,10 @@ class LiquidityStrategy(BaseStrategy):
         self._pending_mids: dict[str, float] = {}  # condition_id -> midpoint
         # Filled positions awaiting exit check: condition_id -> {token_id, side, fill_price, shares}
         self._filled_positions: dict[str, dict] = {}
-        # Stop-loss threshold: exit if position drops more than 50% from fill price
-        self._exit_loss_pct = 0.25
+        # Stop-loss threshold: exit if position drops more than 5% from fill price
+        self._exit_loss_pct = 0.05
+        # Take-profit threshold: exit if position gains more than 50%
+        self._take_profit_pct = 0.50
         # Flag to seed legacy positions on first scan
         self._seeded_legacy = False
         # Fill cooldown: condition_id -> timestamp of last fill (skip for 30 min)
@@ -564,7 +566,8 @@ class LiquidityStrategy(BaseStrategy):
             # Cache current price for dashboard display
             self._filled_prices[cid] = current_price
 
-            loss_pct = (fill_price - current_price) / fill_price
+            change_pct = (current_price - fill_price) / fill_price  # positive = profit
+            loss_pct = -change_pct  # positive = loss (for backward compat in logs)
 
             logger.info(
                 "lp.exit_check",
@@ -572,17 +575,25 @@ class LiquidityStrategy(BaseStrategy):
                 side=pos["side"],
                 fill_price=round(fill_price, 3),
                 current=round(current_price, 3),
-                loss_pct=round(loss_pct, 3),
+                change_pct=round(change_pct, 3),
                 shares=round(shares, 1),
-                threshold=self._exit_loss_pct,
+                sl_threshold=self._exit_loss_pct,
+                tp_threshold=self._take_profit_pct,
             )
 
+            # Determine exit reason
+            exit_reason = None
             if loss_pct >= self._exit_loss_pct:
-                # Stop-loss triggered — sell the position
+                exit_reason = "stop_loss"
+            elif change_pct >= self._take_profit_pct:
+                exit_reason = "take_profit"
+
+            if exit_reason:
                 logger.warning(
                     "lp.exit_triggered",
                     market=cid[:12],
-                    loss_pct=round(loss_pct, 3),
+                    reason=exit_reason,
+                    change_pct=round(change_pct, 3),
                     fill_price=round(fill_price, 3),
                     current=round(current_price, 3),
                     shares=round(shares, 1),
@@ -605,7 +616,7 @@ class LiquidityStrategy(BaseStrategy):
                             shares=pending["shares"],
                             pnl=pnl,
                             spread_cost=abs(pending["entry_price"] - exit_price) * pending["shares"],
-                            exit_reason="stop_loss",
+                            exit_reason=exit_reason,
                             entry_time=pending.get("entry_time", ""),
                         )
 
@@ -662,9 +673,13 @@ class LiquidityStrategy(BaseStrategy):
         )
 
     async def _sell_position(self, token_id: str, shares: float, price: float) -> tuple[bool, float]:
-        """Approve conditional token and sell, stepping down 1¢ at a time then market sell.
+        """Sell position using FOK at best bid for immediate fill.
 
-        Returns (success, exit_price) — exit_price is the price at which the sell was placed.
+        Strategy: check order book → FOK at best bid → step down if needed.
+        FOK (Fill-or-Kill) guarantees immediate fill or nothing — no resting
+        orders that the bot loses track of.
+
+        Returns (success, exit_price) — exit_price is the actual fill price.
         """
         from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
 
@@ -691,8 +706,30 @@ class LiquidityStrategy(BaseStrategy):
                 logger.info("lp.exit_skip_tiny", token=token_id[:16], balance=actual_balance)
                 return True, 0.0  # remove from tracking, position is negligible
 
-            # 3. Try limit sells stepping down 1¢ at a time from fill price
-            start_price = max(0.01, round_to_tick(price))
+            # 3. Check order book to find best bid (actual market price)
+            best_bid = None
+            try:
+                book = await self.clob_client.get_order_book(token_id)  # type: ignore[attr-defined]
+                best_bid = book.best_bid
+            except Exception:
+                logger.warning("lp.exit_book_fetch_failed", token=token_id[:16])
+
+            # Determine starting price: best bid if available, else fall back to passed price
+            if best_bid and best_bid > 0:
+                start_price = max(0.01, round_to_tick(best_bid))
+                logger.info(
+                    "lp.exit_at_best_bid",
+                    token=token_id[:16],
+                    best_bid=best_bid,
+                    entry_price=round(price, 3),
+                    spread=round(abs(price - best_bid), 3),
+                )
+            else:
+                start_price = max(0.01, round_to_tick(price))
+
+            # 4. FOK sell at best bid, then step down 1¢ at a time
+            #    FOK = Fill-or-Kill: immediate fill at price or better, or order is cancelled
+            #    No resting orders — we always know if we actually exited
             last_err = None
             attempt = 0
             sell_price = start_price
@@ -704,10 +741,10 @@ class LiquidityStrategy(BaseStrategy):
                         price=sell_price,
                         size=sell_shares,
                         side="SELL",
-                        order_type="GTC",
+                        order_type="FOK",
                     )
                     logger.info(
-                        "lp.exit_sold",
+                        "lp.exit_sold_fok",
                         token=token_id[:16],
                         shares=round(sell_shares, 1),
                         price=sell_price,
@@ -718,39 +755,20 @@ class LiquidityStrategy(BaseStrategy):
                 except Exception as e:
                     last_err = e
                     logger.warning(
-                        "lp.exit_sell_retry",
+                        "lp.exit_fok_retry",
                         token=token_id[:16],
                         price=sell_price,
                         attempt=attempt,
                         error=str(e)[:120],
                     )
-                    await _asyncio.sleep(0.5)
+                    await _asyncio.sleep(0.3)
                 sell_price = round_to_tick(sell_price - 0.01)
-
-            # 4. All limit prices failed — try FOK market sell at 1¢
-            try:
-                result = await self.clob_client.create_and_post_limit_order(  # type: ignore[attr-defined]
-                    token_id=token_id,
-                    price=0.01,
-                    size=sell_shares,
-                    side="SELL",
-                    order_type="FOK",
-                )
-                logger.info(
-                    "lp.exit_market_sold",
-                    token=token_id[:16],
-                    shares=round(sell_shares, 1),
-                    result=result,
-                )
-                return True, 0.01  # FOK at 1¢ floor
-            except Exception as e:
-                last_err = e
 
             logger.error(
                 "lp.exit_sell_all_failed",
                 token=token_id[:16],
                 shares=round(sell_shares, 1),
-                attempts=attempt + 1,
+                attempts=attempt,
                 last_error=str(last_err)[:200],
             )
             return False, 0.0
